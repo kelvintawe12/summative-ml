@@ -43,6 +43,8 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> with SingleTickerProviderStateMixin {
   int _index = 0;
   late final AnimationController _bgController = AnimationController(vsync: this, duration: const Duration(seconds: 6))..repeat(reverse: true);
+  // Key to access PredictorContent state (used to show header actions in AppBar)
+  final GlobalKey<_PredictorContentState> _predictorKey = GlobalKey<_PredictorContentState>();
 
   @override
   void dispose() {
@@ -76,11 +78,63 @@ class _MainShellState extends State<MainShell> with SingleTickerProviderStateMix
             // Hide the top label on the Predict screen (index 0)
             title: _index == 0 ? const SizedBox.shrink() : Text(titles[_index], style: const TextStyle(fontWeight: FontWeight.bold)),
             leading: _index == 0 ? null : IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => setState(() => _index = 0)),
+            bottom: _index == 0
+                ? PreferredSize(
+                    preferredSize: const Size.fromHeight(86),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                      child: Builder(builder: (ctx) {
+                        final s = _predictorKey.currentState;
+                        final apiReachable = s?.apiReachable ?? false;
+                        final loading = s?.loading ?? false;
+                        final predictions = s?.predictions ?? <Map<String, dynamic>>[];
+                        return Card(
+                          elevation: 2,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            child: Row(
+                              children: [
+                                Container(
+                                  decoration: BoxDecoration(color: const Color(0xFF3D2817), borderRadius: BorderRadius.circular(8)),
+                                  padding: const EdgeInsets.all(8),
+                                  child: const Icon(Icons.grass, color: Colors.white, size: 26),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text('RanchGain', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                                      const SizedBox(height: 2),
+                                      Text(apiReachable ? 'API: Reachable' : 'API: Unreachable', style: TextStyle(fontSize: 12, color: apiReachable ? Colors.green[700] : Colors.red[700])),
+                                    ],
+                                  ),
+                                ),
+                                Row(
+                                  children: [
+                                    Tooltip(message: 'Quick Predict', child: IconButton(icon: const Icon(Icons.flash_on, color: Color(0xFF2E7D32)), onPressed: loading ? null : () => _predictorKey.currentState?._onPredict())),
+                                    Tooltip(message: 'Load Last', child: IconButton(icon: const Icon(Icons.history_toggle_off), onPressed: () => _predictorKey.currentState?._loadLastPrediction())),
+                                    Tooltip(message: 'Export Last', child: IconButton(icon: const Icon(Icons.share), onPressed: () {
+                                      final last = predictions.isNotEmpty ? predictions.first : null;
+                                      if (last != null) Share.share(jsonEncode(last), subject: 'Last Prediction');
+                                    })),
+                                    Tooltip(message: 'Clear All', child: IconButton(icon: const Icon(Icons.delete_forever, color: Colors.redAccent), onPressed: predictions.isEmpty ? null : () => _predictorKey.currentState?._clearHistory())),
+                                  ],
+                                )
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
+                  )
+                : null,
           ),
           body: IndexedStack(
             index: _index,
             children: [
-              const PredictorContent(disableInitialApiCheck: false),
+              PredictorContent(key: _predictorKey, disableInitialApiCheck: false),
               HistoryScreen(),
               ChartsScreen(),
             ],
@@ -138,6 +192,21 @@ class _PredictorContentState extends State<PredictorContent> {
     daysCtrl.dispose();
     yearCtrl.dispose();
     super.dispose();
+  }
+
+  void _loadLastPrediction() {
+    if (predictions.isEmpty) return;
+    final last = predictions.first;
+    final inputs = last['inputs'] as Map<String, dynamic>?;
+    if (inputs != null) {
+      setState(() {
+        weightCtrl.text = (inputs['initialWeight'] ?? weightCtrl.text).toString();
+        daysCtrl.text = (inputs['daysGrazed'] ?? daysCtrl.text).toString();
+        yearCtrl.text = (inputs['year'] ?? yearCtrl.text).toString();
+        treatment = (inputs['treatment'] ?? treatment).toString();
+        pasture = (inputs['pasture'] ?? pasture).toString();
+      });
+    }
   }
 
   Future<void> _loadHistory() async {
@@ -473,26 +542,7 @@ class _PredictorContentState extends State<PredictorContent> {
             ],
           ),
           const SizedBox(height: 8),
-          // Header with icon and title
-          Row(
-            children: [
-              Container(
-                decoration: BoxDecoration(color: const Color(0xFF3D2817), borderRadius: BorderRadius.circular(8)),
-                padding: const EdgeInsets.all(10),
-                child: const Icon(Icons.grass, color: Colors.white, size: 30),
-              ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
-                  Text('RanchGain', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                  SizedBox(height: 4),
-                  Text('Sustainable Ranching Predictor', style: TextStyle(fontSize: 12, color: Colors.black54)),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 8),
           Card(
             elevation: 2,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -851,6 +901,12 @@ class HistoryScreen extends StatefulWidget {
 }
 
 class _HistoryScreenState extends State<HistoryScreen> {
+  String _search = '';
+  final Set<String> _selectedTreatments = {};
+  final Set<String> _selectedPastures = {};
+  DateTime? _startDate;
+  DateTime? _endDate;
+  bool _sortDesc = true;
   @override
   void initState() {
     super.initState();
@@ -898,33 +954,173 @@ class _HistoryScreenState extends State<HistoryScreen> {
     return ValueListenableBuilder<List<Map<String, dynamic>>>(
       valueListenable: predictionStore,
       builder: (context, list, _) {
-        if (list.isEmpty) return const Center(child: Padding(padding: EdgeInsets.all(12), child: Text('No history yet.')));
-        return RefreshIndicator(
-          onRefresh: () async { /* already updated by notifier; reload from prefs as safety */
-            final prefs = await SharedPreferences.getInstance();
-            final s = prefs.getString('prediction_history');
-            if (s != null && s.isNotEmpty) {
-              final decoded = jsonDecode(s) as List<dynamic>;
-              predictionStore.value = decoded.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        final treatments = <String>{};
+        final pastures = <String>{};
+        for (var e in list) {
+          final inputs = e['inputs'] as Map<String, dynamic>?;
+          if (inputs != null) {
+            if (inputs['treatment'] != null) treatments.add(inputs['treatment'].toString());
+            if (inputs['pasture'] != null) pastures.add(inputs['pasture'].toString());
+          }
+        }
+
+        List<Map<String, dynamic>> filtered = List.from(list);
+        if (_selectedTreatments.isNotEmpty) {
+          filtered = filtered.where((e) => _selectedTreatments.contains((e['inputs']?['treatment'] ?? '').toString())).toList();
+        }
+        if (_selectedPastures.isNotEmpty) {
+          filtered = filtered.where((e) => _selectedPastures.contains((e['inputs']?['pasture'] ?? '').toString())).toList();
+        }
+        if (_startDate != null || _endDate != null) {
+          filtered = filtered.where((e) {
+            final ts = e['timestamp'] ?? '';
+            try {
+              final dt = DateTime.parse(ts).toLocal();
+              if (_startDate != null && dt.isBefore(_startDate!)) return false;
+              if (_endDate != null && dt.isAfter(_endDate!.add(const Duration(days:1)))) return false;
+              return true;
+            } catch (_) {
+              return false;
             }
-          },
-          child: ListView.separated(
-            padding: const EdgeInsets.all(12),
-            itemCount: list.length,
-            separatorBuilder: (_,__) => const Divider(height:1),
-            itemBuilder: (ctx,i) {
-              final e = list[i];
-              return ListTile(
-                title: Text(e['gain'] != null ? '${e['gain']} lbs' : 'No gain'),
-                subtitle: Text(e['timestamp'] ?? ''),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _showDetail(e),
-              );
-            },
-          ),
+          }).toList();
+        }
+        if (_search.isNotEmpty) {
+          filtered = filtered.where((e) {
+            final ts = (e['timestamp'] ?? '').toString();
+            final sn = e['gain']?.toString() ?? '';
+            return ts.contains(_search) || sn.contains(_search) || jsonEncode(e['inputs'] ?? {}).contains(_search);
+          }).toList();
+        }
+        filtered.sort((a, b) {
+          final at = DateTime.tryParse(a['timestamp'] ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+          final bt = DateTime.tryParse(b['timestamp'] ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+          return _sortDesc ? bt.compareTo(at) : at.compareTo(bt);
+        });
+
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search by timestamp, value, or inputs', border: OutlineInputBorder()),
+                      onChanged: (v) => setState(() => _search = v.trim()),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(icon: Icon(_sortDesc ? Icons.arrow_downward : Icons.arrow_upward), onPressed: () => setState(() => _sortDesc = !_sortDesc)),
+                  const SizedBox(width: 4),
+                  // Date range picker
+                  TextButton.icon(
+                    onPressed: () async {
+                      final now = DateTime.now();
+                      final initialStart = _startDate ?? now.subtract(const Duration(days: 30));
+                      final initialEnd = _endDate ?? now;
+                      final picked = await showDateRangePicker(context: context, firstDate: DateTime(2000), lastDate: DateTime(now.year + 1), initialDateRange: DateTimeRange(start: initialStart, end: initialEnd));
+                      if (picked != null) setState(() {
+                        _startDate = picked.start;
+                        _endDate = picked.end;
+                      });
+                    },
+                    icon: const Icon(Icons.date_range),
+                    label: Text(_startDate == null ? 'Date Range' : '${_startDate!.toLocal().toString().split(' ')[0]} — ${_endDate!.toLocal().toString().split(' ')[0]}'),
+                  ),
+                ],
+              ),
+            ),
+            // Filter chips
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                children: [
+                  const Text('Filters:'),
+                  const SizedBox(width: 8),
+                  Wrap(
+                    spacing: 6,
+                    children: [
+                      FilterChip(label: const Text('All Treatments'), selected: _selectedTreatments.isEmpty, onSelected: (_) => setState(() => _selectedTreatments.clear())),
+                      ...treatments.map((t) => FilterChip(label: Text(t), selected: _selectedTreatments.contains(t), onSelected: (sel) => setState(() => sel ? _selectedTreatments.add(t) : _selectedTreatments.remove(t)))).toList(),
+                      const SizedBox(width: 8),
+                      FilterChip(label: const Text('All Pastures'), selected: _selectedPastures.isEmpty, onSelected: (_) => setState(() => _selectedPastures.clear())),
+                      ...pastures.map((p) => FilterChip(label: Text(p), selected: _selectedPastures.contains(p), onSelected: (sel) => setState(() => sel ? _selectedPastures.add(p) : _selectedPastures.remove(p)))).toList(),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: filtered.isEmpty
+                  ? const Center(child: Text('No matching history'))
+                  : ListView.separated(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: filtered.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (ctx, i) {
+                        final e = filtered[i];
+                        final ts = e['timestamp'] ?? '';
+                        String prettyTime;
+                        try {
+                          prettyTime = _formatRelative(DateTime.parse(ts).toLocal());
+                        } catch (_) {
+                          prettyTime = ts.toString();
+                        }
+                        return TweenAnimationBuilder(
+                          tween: Tween<double>(begin: 0.96, end: 1.0),
+                          duration: Duration(milliseconds: 260 + (i % 6) * 40),
+                          builder: (context, double scale, child) {
+                            return Transform.scale(scale: scale, child: child);
+                          },
+                          child: Card(
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          elevation: 2,
+                          child: Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(e['gain'] != null ? '${e['gain']} lbs' : 'No gain', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                                    Text(prettyTime, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Text('Inputs: ' + (jsonEncode(e['inputs'] ?? {})), style: const TextStyle(fontSize: 12)),
+                                const SizedBox(height: 8),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    IconButton(icon: const Icon(Icons.visibility), onPressed: () => _showDetail(e)),
+                                    IconButton(icon: const Icon(Icons.copy), onPressed: () { Clipboard.setData(ClipboardData(text: jsonEncode(e))); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied'))); }),
+                                    IconButton(icon: const Icon(Icons.share), onPressed: () => Share.share(jsonEncode(e), subject: 'Prediction')),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
         );
       },
     );
+  }
+
+  String _formatRelative(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inSeconds < 60) return '${diff.inSeconds}s ago';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 30) return '${diff.inDays}d ago';
+    return '${dt.year}-${dt.month.toString().padLeft(2,'0')}-${dt.day.toString().padLeft(2,'0')}';
   }
 }
 
@@ -936,6 +1132,12 @@ class ChartsScreen extends StatefulWidget {
 }
 
 class _ChartsScreenState extends State<ChartsScreen> {
+  final Set<String> _selectedTreatments = {};
+  final Set<String> _selectedPastures = {};
+  DateTime? _startDate;
+  DateTime? _endDate;
+  String _agg = 'mean';
+
   @override
   void initState() {
     super.initState();
@@ -949,33 +1151,133 @@ class _ChartsScreenState extends State<ChartsScreen> {
       if (loaded.isNotEmpty) predictionStore.value = loaded;
     } catch (_) {}
   }
+
+  double _mean(List<double> values) => values.isEmpty ? double.nan : values.reduce((a, b) => a + b) / values.length;
+  double _median(List<double> values) {
+    if (values.isEmpty) return double.nan;
+    final s = List<double>.from(values)..sort();
+    final mid = s.length ~/ 2;
+    return s.length.isOdd ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<List<Map<String, dynamic>>>(
       valueListenable: predictionStore,
       builder: (context, list, _) {
-        final data = <Map<String, dynamic>>[];
+        final treatments = <String>{};
+        final pastures = <String>{};
+        final raw = <Map<String, dynamic>>[];
         for (var e in list) {
+          final inputs = e['inputs'] as Map<String, dynamic>?;
+          if (inputs != null) {
+            if (inputs['treatment'] != null) treatments.add(inputs['treatment'].toString());
+            if (inputs['pasture'] != null) pastures.add(inputs['pasture'].toString());
+          }
           final g = e['gain'];
           final y = (g is num) ? g.toDouble() : double.tryParse(g?.toString() ?? '') ?? double.nan;
-          if (!y.isNaN) data.add({'value': y, 'label': e['timestamp'] ?? ''});
+          if (!y.isNaN) raw.add({'value': y, 'label': e['timestamp'] ?? '', 'inputs': e['inputs']});
         }
-        if (data.isEmpty) return const Center(child: Padding(padding: EdgeInsets.all(12), child: Text('No chart data — make a prediction first.')));
+
+        // Apply filters
+        var filtered = raw.where((e) {
+          final inputs = (e['inputs'] ?? {}) as Map<String, dynamic>;
+          if (_selectedTreatments.isNotEmpty && !_selectedTreatments.contains((inputs['treatment'] ?? '').toString())) return false;
+          if (_selectedPastures.isNotEmpty && !_selectedPastures.contains((inputs['pasture'] ?? '').toString())) return false;
+          if (_startDate != null || _endDate != null) {
+            try {
+              final dt = DateTime.parse(e['label']).toLocal();
+              if (_startDate != null && dt.isBefore(_startDate!)) return false;
+              if (_endDate != null && dt.isAfter(_endDate!.add(const Duration(days:1)))) return false;
+            } catch (_) {
+              return false;
+            }
+          }
+          return true;
+        }).toList();
+
+        final values = filtered.map((e) => e['value'] as double).toList();
+        if (values.isEmpty) return const Center(child: Padding(padding: EdgeInsets.all(12), child: Text('No chart data — make a prediction first.')));
+
+        final mean = _mean(values);
+        final median = _median(values);
+        final count = values.length;
+
         return Padding(
           padding: const EdgeInsets.all(12.0),
           child: Column(
             children: [
-              Expanded(child: _HistogramChart(entries: data)),
-              const SizedBox(height:12),
-              ElevatedButton.icon(onPressed: () async {
-                // ensure persistence is reloaded
-                final prefs = await SharedPreferences.getInstance();
-                final s = prefs.getString('prediction_history');
-                if (s != null && s.isNotEmpty) {
-                  final decoded = jsonDecode(s) as List<dynamic>;
-                  predictionStore.value = decoded.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-                }
-              }, icon: const Icon(Icons.refresh), label: const Text('Reload')),
+              // Controls: filters / stats / actions
+              Card(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(child: Text('Charts — $count points • Mean: ${mean.isNaN ? '-' : mean.toStringAsFixed(1)} • Median: ${median.isNaN ? '-' : median.toStringAsFixed(1)}', style: const TextStyle(fontWeight: FontWeight.bold))),
+                          IconButton(onPressed: () async {
+                            final prefs = await SharedPreferences.getInstance();
+                            final s = prefs.getString('prediction_history');
+                            if (s != null && s.isNotEmpty) {
+                              final decoded = jsonDecode(s) as List<dynamic>;
+                              predictionStore.value = decoded.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+                            }
+                          }, icon: const Icon(Icons.refresh)),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      // Date range + aggregation
+                      Row(
+                        children: [
+                          TextButton.icon(onPressed: () async {
+                            final now = DateTime.now();
+                            final initial = DateTimeRange(start: _startDate ?? now.subtract(const Duration(days: 30)), end: _endDate ?? now);
+                            final picked = await showDateRangePicker(context: context, firstDate: DateTime(2000), lastDate: DateTime(now.year + 1), initialDateRange: initial);
+                            if (picked != null) setState(() { _startDate = picked.start; _endDate = picked.end; });
+                          }, icon: const Icon(Icons.date_range), label: Text(_startDate == null ? 'Date range' : '${_startDate!.toLocal().toString().split(' ')[0]} — ${_endDate!.toLocal().toString().split(' ')[0]}')),
+                          const SizedBox(width: 8),
+                          DropdownButton<String>(value: _agg, items: const [DropdownMenuItem(value: 'mean', child: Text('Mean')), DropdownMenuItem(value: 'median', child: Text('Median'))], onChanged: (v) => setState(() => _agg = v ?? 'mean')),
+                          const Spacer(),
+                          TextButton.icon(onPressed: () {
+                            setState(() { _selectedPastures.clear(); _selectedTreatments.clear(); _startDate = null; _endDate = null; });
+                          }, icon: const Icon(Icons.clear), label: const Text('Clear')),
+                          const SizedBox(width: 8),
+                          TextButton.icon(onPressed: () {
+                            // export filtered data as CSV
+                            final csv = StringBuffer();
+                            csv.writeln('timestamp,gain');
+                            for (var r in filtered) csv.writeln('${r['label']},${(r['value'] as double).toStringAsFixed(2)}');
+                            Share.share(csv.toString(), subject: 'Chart data CSV');
+                          }, icon: const Icon(Icons.download), label: const Text('Export')),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      // Filter chips
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            const Text('Filter:'),
+                            const SizedBox(width: 8),
+                            Wrap(spacing: 6, children: [
+                              FilterChip(label: const Text('All Treatments'), selected: _selectedTreatments.isEmpty, onSelected: (_) => setState(() => _selectedTreatments.clear())),
+                              ...treatments.map((t) => FilterChip(label: Text(t), selected: _selectedTreatments.contains(t), onSelected: (sel) => setState(() => sel ? _selectedTreatments.add(t) : _selectedTreatments.remove(t)))).toList(),
+                              const SizedBox(width: 8),
+                              FilterChip(label: const Text('All Pastures'), selected: _selectedPastures.isEmpty, onSelected: (_) => setState(() => _selectedPastures.clear())),
+                              ...pastures.map((p) => FilterChip(label: Text(p), selected: _selectedPastures.contains(p), onSelected: (sel) => setState(() => sel ? _selectedPastures.add(p) : _selectedPastures.remove(p)))).toList(),
+                            ]),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              // Chart area
+              Expanded(child: _HistogramChart(entries: filtered.map((e) => {'value': e['value'], 'label': e['label']}).toList())),
             ],
           ),
         );
