@@ -51,29 +51,7 @@ class RanchApp extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(width: 56, child: Column(children: [const SizedBox(), Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: List.generate(5, (i) => Align(alignment: Alignment.centerRight, child: Text(((maxCount - i * (maxCount / 4)).toStringAsFixed(0)), style: const TextStyle(fontSize: 11, color: Colors.black54))))))])),
-          const SizedBox(width: 8),
-          Expanded(child: LayoutBuilder(builder: (context, constraints) {
-            final barGap = 6.0;
-            final binWidth = (constraints.maxWidth - (bins.length - 1) * barGap) / bins.length;
-            return SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: SizedBox(
-                width: (binWidth + barGap) * bins.length,
-                height: constraints.maxHeight,
-                child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: List.generate(bins.length, (i) {
-                  final inner = <Widget>[];
-                  final seriesCount = seriesCounts.length;
-                  for (var s = 0; s < seriesCount; s++) {
-                    final counts = seriesCounts[s]['counts'] as List<int>;
-                    final c = counts[i];
-                    final h = (c / (maxCount == 0 ? 1 : maxCount)) * constraints.maxHeight;
-                    inner.add(Expanded(child: Align(alignment: Alignment.bottomCenter, child: Container(height: h.clamp(4.0, constraints.maxHeight), margin: const EdgeInsets.symmetric(horizontal: 2), decoration: BoxDecoration(color: (seriesCounts[s]['color'] as Color).withOpacity(0.85), borderRadius: BorderRadius.circular(4))))));
-                  }
-                  return SizedBox(width: binWidth, child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [Row(children: inner), const SizedBox(height: 6), Text(bins[i]['label'] ?? '', textAlign: TextAlign.center, style: const TextStyle(fontSize: 10))]));
-                })),
-              ),
-            );
-          })),
+              const SizedBox(width: 6),
           const SizedBox(width: 12),
           // Legend
           SizedBox(width: 140, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('Legend', style: TextStyle(fontWeight: FontWeight.bold)), const SizedBox(height: 6), ...seriesCounts.map((s) => Row(children: [Container(width: 12, height: 12, color: s['color'] as Color), const SizedBox(width: 8), Expanded(child: Text(s['name'] ?? ''))])).toList()] ))
@@ -173,7 +151,7 @@ class _MainShellState extends State<MainShell> with SingleTickerProviderStateMix
                                       })),
                                       Tooltip(message: 'Clear All', child: IconButton(icon: const Icon(Icons.delete_forever, color: Colors.redAccent), onPressed: predictions.isEmpty ? null : () => _predictorKey.currentState?._clearHistory())),
                                     ],
-                                  )
+                                  ),
                                 ],
                               ),
                             ),
@@ -598,7 +576,6 @@ class _PredictorContentState extends State<PredictorContent> {
               const SizedBox(width: 8),
               Icon(apiReachable ? Icons.check_circle : Icons.cancel, color: apiReachable ? Colors.green : Colors.red),
               const SizedBox(width: 6),
-              Text(apiReachable ? 'Reachable' : 'Unreachable', style: TextStyle(color: apiReachable ? Colors.green[700] : Colors.red[700])),
             ],
           ),
           const SizedBox(height: 8),
@@ -851,7 +828,9 @@ class _HistogramChartState extends State<_HistogramChart> with SingleTickerProvi
             final totalWidth = constraints.maxWidth;
             final availableForBars = max(0.0, totalWidth - (values.length - 1) * barGap);
             final unitWidth = availableForBars / values.length;
-            final barMaxHeight = constraints.maxHeight; // chart area height
+            // reserve room at bottom for labels/tooltips to avoid overflow
+            final reservedLabelHeight = 30.0;
+            final barMaxHeight = (constraints.maxHeight - reservedLabelHeight).clamp(40.0, constraints.maxHeight);
 
             // Build bars as Expanded children to guarantee they fit
             final children = <Widget>[];
@@ -885,7 +864,7 @@ class _HistogramChartState extends State<_HistogramChart> with SingleTickerProvi
                           ),
                         ),
                         const SizedBox(height: 6),
-                        Text(values[i].toStringAsFixed(0), textAlign: TextAlign.center, style: const TextStyle(fontSize: 10, color: Colors.black54)),
+                        SizedBox(height: reservedLabelHeight - 6, child: Text(values[i].toStringAsFixed(0), textAlign: TextAlign.center, style: const TextStyle(fontSize: 10, color: Colors.black54))),
                       ],
                     ),
                   ),
@@ -909,7 +888,8 @@ class _HistogramChartState extends State<_HistogramChart> with SingleTickerProvi
               final rawLeft = centerX - tooltipMaxW / 2;
               final leftClamped = rawLeft.clamp(0.0, totalWidth - tooltipMaxW);
               tooltipLeft = leftClamped;
-              tooltipTop = (barMaxHeight - h - 44).clamp(0.0, constraints.maxHeight - 30);
+              // place tooltip above the bar area, ensure it doesn't exceed the bar area
+              tooltipTop = (barMaxHeight - h - 8).clamp(0.0, barMaxHeight - 8);
               tooltipText = '${labels[idx]}\n${v.toStringAsFixed(1)} lbs';
             }
 
