@@ -7,7 +7,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'services/predict_service.dart';
+import 'services/prediction_storage.dart';
 import 'utils/validators.dart';
+
+// Shared in-memory notifier so screens see updates immediately
+final ValueNotifier<List<Map<String, dynamic>>> predictionStore = ValueNotifier<List<Map<String, dynamic>>>([]);
 
 void main() => runApp(const RanchApp());
 
@@ -24,20 +28,87 @@ class RanchApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF8B4513), secondary: const Color(0xFF2E7D32)),
         useMaterial3: true,
       ),
-      home: const PredictorPage(),
+      home: const MainShell(),
     );
   }
 }
 
-class PredictorPage extends StatefulWidget {
-  final bool disableInitialApiCheck;
-  const PredictorPage({super.key, this.disableInitialApiCheck = false});
-  
+class MainShell extends StatefulWidget {
+  const MainShell({super.key});
+
   @override
-  State<PredictorPage> createState() => _PredictorPageState();
+  State<MainShell> createState() => _MainShellState();
 }
 
-class _PredictorPageState extends State<PredictorPage> {
+class _MainShellState extends State<MainShell> with SingleTickerProviderStateMixin {
+  int _index = 0;
+  late final AnimationController _bgController = AnimationController(vsync: this, duration: const Duration(seconds: 6))..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _bgController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final titles = ['Predict', 'History', 'Charts'];
+    return Stack(
+      children: [
+        // flowing waves animated background
+        AnimatedBuilder(
+          animation: _bgController,
+          builder: (ctx, child) {
+            final t = _bgController.value;
+            return CustomPaint(
+              painter: _WavePainter(t),
+              child: Container(),
+            );
+          },
+        ),
+        Scaffold(
+          backgroundColor: Colors.transparent,
+          appBar: AppBar(
+            backgroundColor: Colors.white.withOpacity(0.9),
+            foregroundColor: const Color(0xFF3D2817),
+            elevation: 2,
+            toolbarHeight: 44, // compact header
+            // Hide the top label on the Predict screen (index 0)
+            title: _index == 0 ? const SizedBox.shrink() : Text(titles[_index], style: const TextStyle(fontWeight: FontWeight.bold)),
+            leading: _index == 0 ? null : IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => setState(() => _index = 0)),
+          ),
+          body: IndexedStack(
+            index: _index,
+            children: [
+              const PredictorContent(disableInitialApiCheck: false),
+              HistoryScreen(),
+              ChartsScreen(),
+            ],
+          ),
+          bottomNavigationBar: BottomNavigationBar(
+            currentIndex: _index,
+            onTap: (i) => setState(() => _index = i),
+            items: const [
+              BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Predict'),
+              BottomNavigationBarItem(icon: Icon(Icons.history), label: 'History'),
+              BottomNavigationBarItem(icon: Icon(Icons.bar_chart), label: 'Charts'),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class PredictorContent extends StatefulWidget {
+  final bool disableInitialApiCheck;
+  const PredictorContent({super.key, this.disableInitialApiCheck = false});
+
+  @override
+  State<PredictorContent> createState() => _PredictorContentState();
+}
+
+class _PredictorContentState extends State<PredictorContent> {
   final _formKey = GlobalKey<FormState>();
   final weightCtrl = TextEditingController(text: '680');
   final daysCtrl = TextEditingController(text: '140');
@@ -71,12 +142,11 @@ class _PredictorPageState extends State<PredictorPage> {
 
   Future<void> _loadHistory() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final s = prefs.getString('prediction_history');
-      if (s != null && s.isNotEmpty) {
-        final decoded = jsonDecode(s) as List<dynamic>;
+      final loaded = await PredictionStorage.load();
+      if (loaded.isNotEmpty) {
         setState(() {
-          predictions = decoded.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+          predictions = loaded;
+          predictionStore.value = List<Map<String, dynamic>>.from(predictions);
         });
       }
     } catch (_) {}
@@ -84,14 +154,17 @@ class _PredictorPageState extends State<PredictorPage> {
 
   Future<void> _saveHistory() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('prediction_history', jsonEncode(predictions));
+      await PredictionStorage.save(predictions);
+      // publish to shared notifier so other screens update immediately
+      predictionStore.value = List<Map<String, dynamic>>.from(predictions);
     } catch (_) {}
   }
 
   Future<void> _clearHistory() async {
     setState(() => predictions = []);
-    await _saveHistory();
+    // persist and notify
+    await PredictionStorage.clear();
+    await _loadHistory();
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Prediction history cleared')));
   }
 
@@ -378,261 +451,233 @@ class _PredictorPageState extends State<PredictorPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF3D2817),
-        elevation: 2,
-        title: const Text('Cattle Gain Predictor', style: TextStyle(fontWeight: FontWeight.bold)),
-        actions: [
-          IconButton(
-            tooltip: 'Check API',
-            onPressed: _checkApi,
-            icon: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 350),
-              transitionBuilder: (child, anim) => ScaleTransition(scale: anim, child: child),
-              child: Icon(
-                apiReachable ? Icons.cloud_done : Icons.cloud_off,
-                key: ValueKey<bool>(apiReachable),
-                color: apiReachable ? Colors.green[700] : Colors.red[700],
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: ListView(
+        children: [
+          const SizedBox(height: 8),
+          const Text(
+            'USDA CPER Sustainable Ranching',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF5D4037)),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 18),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('API:'),
+              const SizedBox(width: 8),
+              Icon(apiReachable ? Icons.check_circle : Icons.cancel, color: apiReachable ? Colors.green : Colors.red),
+              const SizedBox(width: 6),
+              Text(apiReachable ? 'Reachable' : 'Unreachable', style: TextStyle(color: apiReachable ? Colors.green[700] : Colors.red[700])),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Header with icon and title
+          Row(
+            children: [
+              Container(
+                decoration: BoxDecoration(color: const Color(0xFF3D2817), borderRadius: BorderRadius.circular(8)),
+                padding: const EdgeInsets.all(10),
+                child: const Icon(Icons.grass, color: Colors.white, size: 30),
+              ),
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: const [
+                  Text('RanchGain', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  SizedBox(height: 4),
+                  Text('Sustainable Ranching Predictor', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextFormField(
+                      controller: weightCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Initial Weight (lbs)',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.monitor_weight),
+                      ),
+                      validator: validateWeight,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: daysCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Days Grazed',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.calendar_today),
+                      ),
+                      validator: validateDays,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: yearCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Year',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.event),
+                      ),
+                      validator: validateYear,
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: treatment,
+                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Grazing Treatment'),
+                      items: ['light', 'moderate', 'heavy']
+                          .map((e) => DropdownMenuItem(value: e, child: Text(e.toUpperCase())))
+                          .toList(),
+                      onChanged: (v) => setState(() => treatment = v ?? treatment),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: pasture,
+                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Pasture'),
+                      items: ['15E', '23E', '23W']
+                          .map((e) => DropdownMenuItem(value: e, child: Text('Pasture $e')))
+                          .toList(),
+                      onChanged: (v) => setState(() => pasture = v ?? pasture),
+                    ),
+                    const SizedBox(height: 18),
+                    ElevatedButton(
+                      onPressed: loading ? null : _onPredict,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2E7D32),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      child: loading
+                          ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : const Text('PREDICT GAIN'),
+                    ),
+                    const SizedBox(height: 16),
+                    if (result.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: result.startsWith('Error') ? Colors.red[50] : Colors.green[50],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          result,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: result.startsWith('Error') ? Colors.red[800] : Colors.green[800],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
-          IconButton(
-            tooltip: 'History',
-            icon: const Icon(Icons.history),
-            onPressed: predictions.isEmpty ? null : _showHistoryModal,
-          ),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: ListView(
-          children: [
-            const SizedBox(height: 8),
-            const Text(
-              'USDA CPER Sustainable Ranching',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF5D4037)),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 18),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text('API:'),
-                const SizedBox(width: 8),
-                Icon(apiReachable ? Icons.check_circle : Icons.cancel, color: apiReachable ? Colors.green : Colors.red),
-                const SizedBox(width: 6),
-                Text(apiReachable ? 'Reachable' : 'Unreachable', style: TextStyle(color: apiReachable ? Colors.green[700] : Colors.red[700])),
-              ],
-            ),
-            const SizedBox(height: 8),
-            // Header with icon and title
-            Row(
-              children: [
-                Container(
-                  decoration: BoxDecoration(color: const Color(0xFF3D2817), borderRadius: BorderRadius.circular(8)),
-                  padding: const EdgeInsets.all(10),
-                  child: const Icon(Icons.grass, color: Colors.white, size: 30),
-                ),
-                const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text('RanchGain', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                    SizedBox(height: 4),
-                    Text('Sustainable Ranching Predictor', style: TextStyle(fontSize: 12, color: Colors.black54)),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 18),
-            Card(
-              elevation: 2,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+          const SizedBox(height: 12),
+          Card(
+            elevation: 1,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      TextFormField(
-                        controller: weightCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'Initial Weight (lbs)',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.monitor_weight),
-                        ),
-                        validator: validateWeight,
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: daysCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'Days Grazed',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.calendar_today),
-                        ),
-                        validator: validateDays,
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: yearCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'Year',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.event),
-                        ),
-                        validator: validateYear,
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        initialValue: treatment,
-                        decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Grazing Treatment'),
-                        items: ['light', 'moderate', 'heavy']
-                            .map((e) => DropdownMenuItem(value: e, child: Text(e.toUpperCase())))
-                            .toList(),
-                        onChanged: (v) => setState(() => treatment = v ?? treatment),
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        initialValue: pasture,
-                        decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Pasture'),
-                        items: ['15E', '23E', '23W']
-                            .map((e) => DropdownMenuItem(value: e, child: Text('Pasture $e')))
-                            .toList(),
-                        onChanged: (v) => setState(() => pasture = v ?? pasture),
-                      ),
-                      const SizedBox(height: 18),
-                      ElevatedButton(
-                        onPressed: loading ? null : _onPredict,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2E7D32),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        ),
-                        child: loading
-                            ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                            : const Text('PREDICT GAIN'),
-                      ),
-                      const SizedBox(height: 16),
-                      if (result.isNotEmpty)
-                        Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: result.startsWith('Error') ? Colors.red[50] : Colors.green[50],
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            result,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: result.startsWith('Error') ? Colors.red[800] : Colors.green[800],
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              elevation: 1,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(child: const Text('Prediction Chart', style: TextStyle(fontWeight: FontWeight.bold))),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              tooltip: 'History',
-                              onPressed: predictions.isEmpty ? null : _showHistoryModal,
-                              icon: const Icon(Icons.history),
-                            ),
-                            IconButton(
-                              tooltip: 'Clear',
-                              onPressed: predictions.isEmpty ? null : _clearHistory,
-                              icon: const Icon(Icons.delete_forever),
-                            ),
-                          ],
-                        )
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    _buildChart(),
-                    const SizedBox(height: 6),
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 350),
-                      transitionBuilder: (child, anim) => FadeTransition(opacity: anim, child: child),
-                      child: Text('Points: ${predictions.length}', key: ValueKey<int>(predictions.length), style: const TextStyle(fontSize: 12, color: Colors.black54)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              elevation: 1,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('API Health', style: TextStyle(fontWeight: FontWeight.bold)),
-                        TextButton.icon(
-                          onPressed: healthLoading ? null : _fetchHealth,
-                          icon: healthLoading
-                              ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                              : const Icon(Icons.refresh),
-                          label: const Text('Fetch'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    if (healthInfo != null)
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      Expanded(child: const Text('Prediction Chart', style: TextStyle(fontWeight: FontWeight.bold))),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text('Status: ${healthInfo!["status"]}', style: TextStyle(color: healthInfo!["status"] == 'ok' ? Colors.green[700] : Colors.red[700])),
-                          const SizedBox(height: 6),
-                          Text('Uptime: ${healthInfo!["uptime"] ?? '-'}s'),
-                          const SizedBox(height: 6),
-                          Text('Version: ${healthInfo!["version"] ?? '-'}'),
+                          IconButton(
+                            tooltip: 'History',
+                            onPressed: predictions.isEmpty ? null : _showHistoryModal,
+                            icon: const Icon(Icons.history),
+                          ),
+                          IconButton(
+                            tooltip: 'Clear',
+                            onPressed: predictions.isEmpty ? null : _clearHistory,
+                            icon: const Icon(Icons.delete_forever),
+                          ),
                         ],
                       )
-                    else
-                      const Text('No health info loaded. Tap Fetch to retrieve API status.', style: TextStyle(color: Colors.black54)),
-                  ],
-                ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  _buildChart(),
+                  const SizedBox(height: 6),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 350),
+                    transitionBuilder: (child, anim) => FadeTransition(opacity: anim, child: child),
+                    child: Text('Points: ${predictions.length}', key: ValueKey<int>(predictions.length), style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 12),
-            const Text(
-              'Note: Ensure the API is reachable from your device. For emulator use, host must be accessible.',
-              style: TextStyle(fontSize: 12),
-              textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
+          Card(
+            elevation: 1,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('API Health', style: TextStyle(fontWeight: FontWeight.bold)),
+                      TextButton.icon(
+                        onPressed: healthLoading ? null : _fetchHealth,
+                        icon: healthLoading
+                            ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.refresh),
+                        label: const Text('Fetch'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (healthInfo != null)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Status: ${healthInfo!["status"]}', style: TextStyle(color: healthInfo!["status"] == 'ok' ? Colors.green[700] : Colors.red[700])),
+                        const SizedBox(height: 6),
+                        Text('Uptime: ${healthInfo!["uptime"] ?? '-'}s'),
+                        const SizedBox(height: 6),
+                        Text('Version: ${healthInfo!["version"] ?? '-'}'),
+                      ],
+                    )
+                  else
+                    const Text('No health info loaded. Tap Fetch to retrieve API status.', style: TextStyle(color: Colors.black54)),
+                ],
+              ),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Note: Ensure the API is reachable from your device. For emulator use, host must be accessible.',
+            style: TextStyle(fontSize: 12),
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }
@@ -796,4 +841,188 @@ class _HistogramChartState extends State<_HistogramChart> with SingleTickerProvi
       ],
     );
   }
+}
+
+// Simple History screen — loads saved predictions and shows a list
+class HistoryScreen extends StatefulWidget {
+  const HistoryScreen({super.key});
+  @override
+  State<HistoryScreen> createState() => _HistoryScreenState();
+}
+
+class _HistoryScreenState extends State<HistoryScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _ensureLoaded();
+  }
+
+  Future<void> _ensureLoaded() async {
+    if (predictionStore.value.isNotEmpty) return;
+    try {
+      final loaded = await PredictionStorage.load();
+      if (loaded.isNotEmpty) predictionStore.value = loaded;
+    } catch (_) {}
+  }
+  void _showDetail(Map<String, dynamic> e) {
+    showModalBottomSheet<void>(context: context, builder: (_) {
+      return Padding(
+        padding: EdgeInsets.fromLTRB(16,16,16, MediaQuery.of(context).viewInsets.bottom + 16),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Prediction', style: TextStyle(fontWeight: FontWeight.bold)), IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.of(context).pop())]),
+              const SizedBox(height:8),
+              Text('When: ${e['timestamp']}'),
+              const SizedBox(height:8),
+              Text('Inputs: ${jsonEncode(e['inputs'])}'),
+              const SizedBox(height:8),
+              Text('Gain: ${e['gain'] ?? 'N/A'}'),
+              const SizedBox(height:12),
+              Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                TextButton.icon(onPressed: () { Clipboard.setData(ClipboardData(text: jsonEncode(e))); Navigator.of(context).pop(); }, icon: const Icon(Icons.copy), label: const Text('Copy')),
+                const SizedBox(width:8),
+                TextButton.icon(onPressed: () { Navigator.of(context).pop(); Share.share(jsonEncode(e), subject: 'Prediction'); }, icon: const Icon(Icons.share), label: const Text('Share')),
+              ])
+            ],
+          ),
+        ),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<List<Map<String, dynamic>>>(
+      valueListenable: predictionStore,
+      builder: (context, list, _) {
+        if (list.isEmpty) return const Center(child: Padding(padding: EdgeInsets.all(12), child: Text('No history yet.')));
+        return RefreshIndicator(
+          onRefresh: () async { /* already updated by notifier; reload from prefs as safety */
+            final prefs = await SharedPreferences.getInstance();
+            final s = prefs.getString('prediction_history');
+            if (s != null && s.isNotEmpty) {
+              final decoded = jsonDecode(s) as List<dynamic>;
+              predictionStore.value = decoded.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+            }
+          },
+          child: ListView.separated(
+            padding: const EdgeInsets.all(12),
+            itemCount: list.length,
+            separatorBuilder: (_,__) => const Divider(height:1),
+            itemBuilder: (ctx,i) {
+              final e = list[i];
+              return ListTile(
+                title: Text(e['gain'] != null ? '${e['gain']} lbs' : 'No gain'),
+                subtitle: Text(e['timestamp'] ?? ''),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _showDetail(e),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+// Charts screen — renders histogram using saved history
+class ChartsScreen extends StatefulWidget {
+  const ChartsScreen({super.key});
+  @override
+  State<ChartsScreen> createState() => _ChartsScreenState();
+}
+
+class _ChartsScreenState extends State<ChartsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _ensureLoaded();
+  }
+
+  Future<void> _ensureLoaded() async {
+    if (predictionStore.value.isNotEmpty) return;
+    try {
+      final loaded = await PredictionStorage.load();
+      if (loaded.isNotEmpty) predictionStore.value = loaded;
+    } catch (_) {}
+  }
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<List<Map<String, dynamic>>>(
+      valueListenable: predictionStore,
+      builder: (context, list, _) {
+        final data = <Map<String, dynamic>>[];
+        for (var e in list) {
+          final g = e['gain'];
+          final y = (g is num) ? g.toDouble() : double.tryParse(g?.toString() ?? '') ?? double.nan;
+          if (!y.isNaN) data.add({'value': y, 'label': e['timestamp'] ?? ''});
+        }
+        if (data.isEmpty) return const Center(child: Padding(padding: EdgeInsets.all(12), child: Text('No chart data — make a prediction first.')));
+        return Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: Column(
+            children: [
+              Expanded(child: _HistogramChart(entries: data)),
+              const SizedBox(height:12),
+              ElevatedButton.icon(onPressed: () async {
+                // ensure persistence is reloaded
+                final prefs = await SharedPreferences.getInstance();
+                final s = prefs.getString('prediction_history');
+                if (s != null && s.isNotEmpty) {
+                  final decoded = jsonDecode(s) as List<dynamic>;
+                  predictionStore.value = decoded.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+                }
+              }, icon: const Icon(Icons.refresh), label: const Text('Reload')),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _WavePainter extends CustomPainter {
+  final double t;
+  _WavePainter(this.t);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint1 = Paint()..color = Colors.white.withOpacity(0.12);
+    final paint2 = Paint()..color = Colors.white.withOpacity(0.08);
+    final path1 = Path();
+    final path2 = Path();
+    final h = size.height;
+    final w = size.width;
+
+    // Wave 1
+    path1.moveTo(0, h * 0.6);
+    for (double x = 0; x <= w; x += 1) {
+      final dx = x / w * 2 * pi;
+      final y = h * 0.5 + sin(dx * 1.5 + t * 2 * pi) * 20;
+      path1.lineTo(x, y);
+    }
+    path1.lineTo(w, h);
+    path1.lineTo(0, h);
+    path1.close();
+
+    // Wave 2 (slower, offset)
+    path2.moveTo(0, h * 0.7);
+    for (double x = 0; x <= w; x += 1) {
+      final dx = x / w * 2 * pi;
+      final y = h * 0.65 + sin(dx * 1.2 + t * 2 * pi + 1.0) * 14;
+      path2.lineTo(x, y);
+    }
+    path2.lineTo(w, h);
+    path2.lineTo(0, h);
+    path2.close();
+
+    canvas.drawPath(path2, paint2);
+    canvas.drawPath(path1, paint1);
+  }
+
+  @override
+  bool shouldRepaint(covariant _WavePainter oldDelegate) => oldDelegate.t != t;
 }
