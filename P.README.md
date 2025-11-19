@@ -53,51 +53,61 @@ Notes
 Contact / Support
 - If you want me to insert the YouTube link or the Google Drive link into this README and/or update the Flutter app base URL, paste the links and I will update the repo.
 
-Author: Kelvin Tawe — November 2025
-Sustainable Ranch — Cattle Weight Gain Predictor
 
-Mission / Problem (≤ 4 lines)
-- Provide ranchers with a compact tool to estimate cattle weight gain under different grazing treatments and pastures using historical USDA CPER data, helping balance production and conservation.
+Mission / Problem (short)
+- Provide ranchers with a quick, data-driven estimate of cattle weight gain under different grazing treatments and pastures, using USDA CPER data to inform sustainable grazing decisions.
 
-Public API (use this for automated tests)
-- Swagger UI (public): https://summative-ml-hliu.onrender.com/docs
-- The grader will POST to `/predict` via the Swagger UI. The endpoint accepts JSON and returns `predicted_weight_gain_lbs`. Use the public URL (not localhost) for testing.
+Public API (for automated tests)
+- Swagger UI (public, tests use this): https://summative-ml-hliu.onrender.com/docs
+- The `/predict` POST endpoint accepts JSON inputs and returns `predicted_weight_gain_lbs`. Use the Swagger UI above to exercise the endpoint (do NOT use localhost when submitting tests).
 
 YouTube demo (≤ 5 minutes)
-- <INSERT_YOUTUBE_URL_HERE>
+- Demo video: <INSERT_YOUTUBE_URL_HERE>  
+  (Replace the placeholder above with a publicly accessible YouTube link of at most 5 minutes.)
 
-How to run the mobile/web app (clear steps)
-Prerequisites:
-- Install Flutter (stable) and ensure `flutter` is on your PATH. See: https://flutter.dev/docs/get-started/install
+Run the mobile/web app (Flutter)
+1. Prerequisites
+   - Install Flutter (stable) and enable the desired platforms (web, Android or iOS). See https://flutter.dev/docs/get-started/install.
+   - From PowerShell on Windows, enable script execution if required and ensure `flutter` is on your PATH.
 
-Run in Chrome (web):
+2. Run on Chrome (web quick test)
 ```powershell
 cd Ranhop-flutterAPP
 flutter pub get
 flutter run -d chrome
 ```
 
-Run on Android device/emulator:
+3. Run on an Android device/emulator
 ```powershell
 cd Ranhop-flutterAPP
 flutter pub get
+# list devices
 flutter devices
+# run on the target device id or default emulator
 flutter run
 ```
 
-Notes
-- The Flutter app calls the public prediction API. For automated grading keep the app pointed at the public Swagger domain above. To change the target (local tests), edit `Ranhop-flutterAPP/lib/services/predict_service.dart` and modify the `baseUrl` constant.
-- If you run the API locally, ensure `API/` contains the model artifacts: `best_model.pkl`, `scaler.pkl`, `feature_columns.pkl`, `le_treatment.pkl`, `le_pasture.pkl`.
+4. Important configuration notes
+- The Flutter app calls the public prediction API. To point the app to a different endpoint (for local testing), edit `Ranhop-flutterAPP/lib/services/predict_service.dart` and update the `baseUrl` or host constant. For automated grading, keep the base URL pointing to the public Swagger URL domain above.
+- When running the API locally, ensure model artifact files exist in `API/` (`best_model.pkl`, `scaler.pkl`, `feature_columns.pkl`, `le_treatment.pkl`, `le_pasture.pkl`). The hosted API already has these artifacts.
 
-Data / Colab
-- Official dataset (USDA ARS LTAR CPER): https://agdatacommons.nal.usda.gov/articles/dataset/Data_from_USDA_ARS_Central_Plains_Experimental_Range_CPER_near_Nunn_CO_Cattle_weight_gains_managed_with_light_moderate_and_heavy_grazing_intensities/25217282?file=44540186
-- I ran preprocessing and experiments in Google Colab. To avoid runtime issues I included a working copy of the processed CSV on Google Drive:
-  https://drive.google.com/uc?id=1LLTrZiCAuPTpQUNWKVteyZzcJ-Zews6x
-
-Contact / Notes
-- To have me insert the YouTube URL or change the app base URL automatically, paste the URL(s) here and I will update the repo.
+Contact / Troubleshooting
+- If the Swagger UI is unreachable, verify the public URL in the "Public API" section. If you need me to update the YouTube link or the API URL in the Flutter app, provide the link or new URL and I will update the repo.
 
 Author: Kelvin Tawe — November 2025
+# Sustainable Ranch Cattle Weight Gain Predictor – Kelvin Tawe
+
+**Mission**: Help ranchers choose light grazing using real USDA CPER data → highest profit + wildlife conservation.
+
+### Live Links
+- **Public API (Swagger UI)**: https://summative-ml-hliu.onrender.com/docs
+- **Flutter Web App (works on any phone/laptop)**: https://kelvintawe12.github.io/summative-ml/
+Sustainable Ranch Cattle Weight Gain Predictor — Kelvin Tawe
+
+Mission (short)
+- Provide ranchers a quick, data-driven estimate of cattle weight gain for different grazing treatments and pastures using USDA CPER data. Inform sustainable grazing choices while balancing production and conservation.
+
+Public API (used for automated tests)
 - Swagger UI (public, tests use this): https://summative-ml-hliu.onrender.com/docs
 - The grader will use the public Swagger UI to POST to `/predict`. The endpoint expects JSON and returns `predicted_weight_gain_lbs`. Do NOT use localhost in the submission — use the public URL above.
 
