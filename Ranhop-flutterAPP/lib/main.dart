@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:math';
+import 'package:flutter/rendering.dart';
+import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
@@ -12,6 +15,8 @@ import 'utils/validators.dart';
 
 // Shared in-memory notifier so screens see updates immediately
 final ValueNotifier<List<Map<String, dynamic>>> predictionStore = ValueNotifier<List<Map<String, dynamic>>>([]);
+// Notifier for API reachability so parent AppBar can react when child checks the API
+final ValueNotifier<bool?> apiReachNotifier = ValueNotifier<bool?>(null);
 
 void main() => runApp(const RanchApp());
 
@@ -32,6 +37,50 @@ class RanchApp extends StatelessWidget {
     );
   }
 }
+
+  // Multi-series histogram: grouped bars per bin
+  class _MultiSeriesHistogram extends StatelessWidget {
+    final List<Map<String, dynamic>> bins; // each: {'label','value','count'} value may be log or count
+    final List<Map<String, dynamic>> seriesCounts; // each: {'name','counts':List<int>,'color'}
+    const _MultiSeriesHistogram({Key? key, required this.bins, required this.seriesCounts}) : super(key: key);
+
+    @override
+    Widget build(BuildContext context) {
+      final maxCount = seriesCounts.expand((s) => (s['counts'] as List<int>)).fold<int>(0, (p, e) => max(p, e));
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(width: 56, child: Column(children: [const SizedBox(), Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: List.generate(5, (i) => Align(alignment: Alignment.centerRight, child: Text(((maxCount - i * (maxCount / 4)).toStringAsFixed(0)), style: const TextStyle(fontSize: 11, color: Colors.black54))))))])),
+          const SizedBox(width: 8),
+          Expanded(child: LayoutBuilder(builder: (context, constraints) {
+            final barGap = 6.0;
+            final binWidth = (constraints.maxWidth - (bins.length - 1) * barGap) / bins.length;
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: (binWidth + barGap) * bins.length,
+                height: constraints.maxHeight,
+                child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: List.generate(bins.length, (i) {
+                  final inner = <Widget>[];
+                  final seriesCount = seriesCounts.length;
+                  for (var s = 0; s < seriesCount; s++) {
+                    final counts = seriesCounts[s]['counts'] as List<int>;
+                    final c = counts[i];
+                    final h = (c / (maxCount == 0 ? 1 : maxCount)) * constraints.maxHeight;
+                    inner.add(Expanded(child: Align(alignment: Alignment.bottomCenter, child: Container(height: h.clamp(4.0, constraints.maxHeight), margin: const EdgeInsets.symmetric(horizontal: 2), decoration: BoxDecoration(color: (seriesCounts[s]['color'] as Color).withOpacity(0.85), borderRadius: BorderRadius.circular(4))))));
+                  }
+                  return SizedBox(width: binWidth, child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [Row(children: inner), const SizedBox(height: 6), Text(bins[i]['label'] ?? '', textAlign: TextAlign.center, style: const TextStyle(fontSize: 10))]));
+                })),
+              ),
+            );
+          })),
+          const SizedBox(width: 12),
+          // Legend
+          SizedBox(width: 140, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('Legend', style: TextStyle(fontWeight: FontWeight.bold)), const SizedBox(height: 6), ...seriesCounts.map((s) => Row(children: [Container(width: 12, height: 12, color: s['color'] as Color), const SizedBox(width: 8), Expanded(child: Text(s['name'] ?? ''))])).toList()] ))
+        ],
+      );
+    }
+  }
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -83,50 +132,54 @@ class _MainShellState extends State<MainShell> with SingleTickerProviderStateMix
                     preferredSize: const Size.fromHeight(86),
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-                      child: Builder(builder: (ctx) {
-                        final s = _predictorKey.currentState;
-                        final apiReachable = s?.apiReachable ?? false;
-                        final loading = s?.loading ?? false;
-                        final predictions = s?.predictions ?? <Map<String, dynamic>>[];
-                        return Card(
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            child: Row(
-                              children: [
-                                Container(
-                                  decoration: BoxDecoration(color: const Color(0xFF3D2817), borderRadius: BorderRadius.circular(8)),
-                                  padding: const EdgeInsets.all(8),
-                                  child: const Icon(Icons.grass, color: Colors.white, size: 26),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Text('RanchGain', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                                      const SizedBox(height: 2),
-                                      Text(apiReachable ? 'API: Reachable' : 'API: Unreachable', style: TextStyle(fontSize: 12, color: apiReachable ? Colors.green[700] : Colors.red[700])),
-                                    ],
+                      child: ValueListenableBuilder<bool?>(
+                        valueListenable: apiReachNotifier,
+                        builder: (context, apiReach, _) {
+                          final s = _predictorKey.currentState;
+                          final loading = s?.loading ?? false;
+                          final predictions = s?.predictions ?? <Map<String, dynamic>>[];
+                          final statusText = apiReach == null ? 'API: Checking' : (apiReach ? 'API: Reachable' : 'API: Unreachable');
+                          final statusColor = apiReach == null ? Colors.orange[800] : (apiReach ? Colors.green[700] : Colors.red[700]);
+                          return Card(
+                            elevation: 2,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    decoration: BoxDecoration(color: const Color(0xFF3D2817), borderRadius: BorderRadius.circular(8)),
+                                    padding: const EdgeInsets.all(8),
+                                    child: const Icon(Icons.grass, color: Colors.white, size: 26),
                                   ),
-                                ),
-                                Row(
-                                  children: [
-                                    Tooltip(message: 'Quick Predict', child: IconButton(icon: const Icon(Icons.flash_on, color: Color(0xFF2E7D32)), onPressed: loading ? null : () => _predictorKey.currentState?._onPredict())),
-                                    Tooltip(message: 'Load Last', child: IconButton(icon: const Icon(Icons.history_toggle_off), onPressed: () => _predictorKey.currentState?._loadLastPrediction())),
-                                    Tooltip(message: 'Export Last', child: IconButton(icon: const Icon(Icons.share), onPressed: () {
-                                      final last = predictions.isNotEmpty ? predictions.first : null;
-                                      if (last != null) Share.share(jsonEncode(last), subject: 'Last Prediction');
-                                    })),
-                                    Tooltip(message: 'Clear All', child: IconButton(icon: const Icon(Icons.delete_forever, color: Colors.redAccent), onPressed: predictions.isEmpty ? null : () => _predictorKey.currentState?._clearHistory())),
-                                  ],
-                                )
-                              ],
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text('RanchGain', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                                        const SizedBox(height: 2),
+                                        Text(statusText, style: TextStyle(fontSize: 12, color: statusColor)),
+                                      ],
+                                    ),
+                                  ),
+                                  Row(
+                                    children: [
+                                      Tooltip(message: 'Quick Predict', child: IconButton(icon: const Icon(Icons.flash_on, color: Color(0xFF2E7D32)), onPressed: loading ? null : () => _predictorKey.currentState?._onPredict())),
+                                      Tooltip(message: 'Load Last', child: IconButton(icon: const Icon(Icons.history_toggle_off), onPressed: () => _predictorKey.currentState?._loadLastPrediction())),
+                                      Tooltip(message: 'Export Last', child: IconButton(icon: const Icon(Icons.share), onPressed: () {
+                                        final last = predictions.isNotEmpty ? predictions.first : null;
+                                        if (last != null) Share.share(jsonEncode(last), subject: 'Last Prediction');
+                                      })),
+                                      Tooltip(message: 'Clear All', child: IconButton(icon: const Icon(Icons.delete_forever, color: Colors.redAccent), onPressed: predictions.isEmpty ? null : () => _predictorKey.currentState?._clearHistory())),
+                                    ],
+                                  )
+                                ],
+                              ),
                             ),
-                          ),
-                        );
-                      }),
+                          );
+                        },
+                      ),
                     ),
                   )
                 : null,
@@ -373,6 +426,7 @@ class _PredictorContentState extends State<PredictorContent> {
     );
   }
 
+  // Build series counts per bin keyed by treatment name
   Future<void> _showHistoryModal() async {
     await showModalBottomSheet<void>(
       context: context,
@@ -424,11 +478,14 @@ class _PredictorContentState extends State<PredictorContent> {
     );
   }
 
+// (multi-series histogram moved below)
+
   Future<void> _checkApi() async {
     setState(() => apiReachable = false);
     try {
       final ok = await _service.checkReachable(client: http.Client());
       setState(() => apiReachable = ok);
+      apiReachNotifier.value = ok;
       if (!ok) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -439,6 +496,7 @@ class _PredictorContentState extends State<PredictorContent> {
       }
     } catch (_) {
       setState(() => apiReachable = false);
+      apiReachNotifier.value = false;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('API unreachable'),
@@ -459,12 +517,14 @@ class _PredictorContentState extends State<PredictorContent> {
         healthInfo = data;
         apiReachable = true;
       });
+      apiReachNotifier.value = true;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Health fetched')));
     } catch (e) {
       setState(() {
         healthInfo = null;
         apiReachable = false;
       });
+      apiReachNotifier.value = false;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Health fetch failed: $e'), action: SnackBarAction(label: 'Retry', onPressed: _fetchHealth)));
     } finally {
       setState(() => healthLoading = false);
@@ -1136,7 +1196,85 @@ class _ChartsScreenState extends State<ChartsScreen> {
   final Set<String> _selectedPastures = {};
   DateTime? _startDate;
   DateTime? _endDate;
-  String _agg = 'mean';
+  int _binCount = 8;
+  bool _logScale = false;
+  final GlobalKey _chartKey = GlobalKey();
+
+  // Build series counts per bin keyed by treatment name (moved here from predictor)
+  List<Map<String, dynamic>> _buildSeriesCounts(List<Map<String, dynamic>> filtered, List<Map<String, dynamic>> bins) {
+    final Map<String, List<int>> countsBySeries = {};
+    for (var e in filtered) {
+      final inputs = (e['inputs'] ?? {}) as Map<String, dynamic>;
+      final series = (inputs['treatment'] ?? 'unknown').toString();
+      countsBySeries.putIfAbsent(series, () => List<int>.filled(bins.length, 0));
+    }
+    // compute bin edges from bins labels by parsing numbers in label
+    final binRanges = <List<double>>[];
+    for (var b in bins) {
+      final label = b['label'] as String;
+      final parts = label.split('–');
+      double lo = 0, hi = 0;
+      try {
+        lo = double.parse(parts.first);
+        hi = double.parse(parts.last);
+      } catch (_) {
+        lo = 0;
+        hi = 0;
+      }
+      binRanges.add([lo, hi]);
+    }
+
+    for (var e in filtered) {
+      final inputs = (e['inputs'] ?? {}) as Map<String, dynamic>;
+      final series = (inputs['treatment'] ?? 'unknown').toString();
+      final v = (e['value'] as double);
+      for (var i = 0; i < binRanges.length; i++) {
+        final lo = binRanges[i][0];
+        final hi = binRanges[i][1];
+        if (v >= lo && v <= hi) {
+          countsBySeries[series]![i]++;
+          break;
+        }
+      }
+    }
+
+    final colors = [Colors.green.shade600, Colors.blue.shade600, Colors.orange.shade600, Colors.purple.shade600, Colors.teal.shade600];
+    final out = <Map<String, dynamic>>[];
+    var idx = 0;
+    countsBySeries.forEach((k, v) {
+      out.add({'name': k, 'counts': v, 'color': colors[idx % colors.length]});
+      idx++;
+    });
+    return out;
+  }
+
+  Future<void> _exportChartAsPng() async {
+    try {
+      final boundary = _chartKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Chart not available to export')));
+        return;
+      }
+      final ui.Image image = await boundary.toImage(pixelRatio: 3.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      final bytes = byteData!.buffer.asUint8List();
+      final base64Str = base64Encode(bytes);
+      final dataUrl = 'data:image/png;base64,$base64Str';
+      if (!kIsWeb) {
+        try {
+          await Share.share(dataUrl, subject: 'Ranch chart PNG');
+        } catch (_) {
+          await Clipboard.setData(ClipboardData(text: base64Str));
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('PNG copied as base64 to clipboard')));
+        }
+      } else {
+        await Clipboard.setData(ClipboardData(text: base64Str));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('PNG copied as base64 to clipboard')));
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Export failed: $e')));
+    }
+  }
 
   @override
   void initState() {
@@ -1160,6 +1298,31 @@ class _ChartsScreenState extends State<ChartsScreen> {
     return s.length.isOdd ? s[mid] : (s[mid - 1] + s[mid]) / 2;
   }
 
+  // Build histogram bins from numeric values
+  List<Map<String, dynamic>> _binsFromValues(List<double> values, int bins, {bool logScale = false}) {
+    if (values.isEmpty) return [];
+    final minV = values.reduce(min);
+    final maxV = values.reduce(max);
+    final range = (maxV - minV) == 0 ? maxV.abs() + 1.0 : (maxV - minV);
+    final binW = range / bins;
+    final counts = List<int>.filled(bins, 0);
+    for (var v in values) {
+      var idx = ((v - minV) / binW).floor();
+      if (idx < 0) idx = 0;
+      if (idx >= bins) idx = bins - 1;
+      counts[idx]++;
+    }
+    final out = <Map<String, dynamic>>[];
+    for (var i = 0; i < bins; i++) {
+      final lo = minV + i * binW;
+      final hi = lo + binW;
+      final label = '${lo.toStringAsFixed(0)}–${hi.toStringAsFixed(0)}';
+      final val = logScale ? (counts[i] > 0 ? log(counts[i] + 1) : 0.0) : counts[i].toDouble();
+      out.add({'value': val, 'label': label, 'count': counts[i]});
+    }
+    return out;
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<List<Map<String, dynamic>>>(
@@ -1180,7 +1343,7 @@ class _ChartsScreenState extends State<ChartsScreen> {
         }
 
         // Apply filters
-        var filtered = raw.where((e) {
+        final filtered = raw.where((e) {
           final inputs = (e['inputs'] ?? {}) as Map<String, dynamic>;
           if (_selectedTreatments.isNotEmpty && !_selectedTreatments.contains((inputs['treatment'] ?? '').toString())) return false;
           if (_selectedPastures.isNotEmpty && !_selectedPastures.contains((inputs['pasture'] ?? '').toString())) return false;
@@ -1202,21 +1365,26 @@ class _ChartsScreenState extends State<ChartsScreen> {
         final mean = _mean(values);
         final median = _median(values);
         final count = values.length;
+        final minVal = values.reduce(min);
+        final maxVal = values.reduce(max);
+
+        final bins = _binsFromValues(values, _binCount, logScale: _logScale);
+        final top3 = List<Map<String, dynamic>>.from(filtered)..sort((a,b) => (b['value'] as double).compareTo(a['value'] as double));
 
         return Padding(
           padding: const EdgeInsets.all(12.0),
           child: Column(
             children: [
-              // Controls: filters / stats / actions
+              // Top controls and summary
               Card(
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 child: Padding(
-                  padding: const EdgeInsets.all(8.0),
+                  padding: const EdgeInsets.all(10.0),
                   child: Column(
                     children: [
                       Row(
                         children: [
-                          Expanded(child: Text('Charts — $count points • Mean: ${mean.isNaN ? '-' : mean.toStringAsFixed(1)} • Median: ${median.isNaN ? '-' : median.toStringAsFixed(1)}', style: const TextStyle(fontWeight: FontWeight.bold))),
+                          Expanded(child: Text('Charts — $count points • Mean: ${mean.isNaN ? '-' : mean.toStringAsFixed(1)} • Median: ${median.isNaN ? '-' : median.toStringAsFixed(1)} • Range: ${minVal.toStringAsFixed(0)}–${maxVal.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold))),
                           IconButton(onPressed: () async {
                             final prefs = await SharedPreferences.getInstance();
                             final s = prefs.getString('prediction_history');
@@ -1227,63 +1395,180 @@ class _ChartsScreenState extends State<ChartsScreen> {
                           }, icon: const Icon(Icons.refresh)),
                         ],
                       ),
-                      const SizedBox(height: 6),
-                      // Date range + aggregation
-                      Row(
-                        children: [
-                          TextButton.icon(onPressed: () async {
-                            final now = DateTime.now();
-                            final initial = DateTimeRange(start: _startDate ?? now.subtract(const Duration(days: 30)), end: _endDate ?? now);
-                            final picked = await showDateRangePicker(context: context, firstDate: DateTime(2000), lastDate: DateTime(now.year + 1), initialDateRange: initial);
-                            if (picked != null) setState(() { _startDate = picked.start; _endDate = picked.end; });
-                          }, icon: const Icon(Icons.date_range), label: Text(_startDate == null ? 'Date range' : '${_startDate!.toLocal().toString().split(' ')[0]} — ${_endDate!.toLocal().toString().split(' ')[0]}')),
-                          const SizedBox(width: 8),
-                          DropdownButton<String>(value: _agg, items: const [DropdownMenuItem(value: 'mean', child: Text('Mean')), DropdownMenuItem(value: 'median', child: Text('Median'))], onChanged: (v) => setState(() => _agg = v ?? 'mean')),
-                          const Spacer(),
-                          TextButton.icon(onPressed: () {
-                            setState(() { _selectedPastures.clear(); _selectedTreatments.clear(); _startDate = null; _endDate = null; });
-                          }, icon: const Icon(Icons.clear), label: const Text('Clear')),
-                          const SizedBox(width: 8),
-                          TextButton.icon(onPressed: () {
-                            // export filtered data as CSV
-                            final csv = StringBuffer();
-                            csv.writeln('timestamp,gain');
-                            for (var r in filtered) csv.writeln('${r['label']},${(r['value'] as double).toStringAsFixed(2)}');
-                            Share.share(csv.toString(), subject: 'Chart data CSV');
-                          }, icon: const Icon(Icons.download), label: const Text('Export')),
-                        ],
-                      ),
                       const SizedBox(height: 8),
-                      // Filter chips
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          children: [
-                            const Text('Filter:'),
-                            const SizedBox(width: 8),
-                            Wrap(spacing: 6, children: [
-                              FilterChip(label: const Text('All Treatments'), selected: _selectedTreatments.isEmpty, onSelected: (_) => setState(() => _selectedTreatments.clear())),
-                              ...treatments.map((t) => FilterChip(label: Text(t), selected: _selectedTreatments.contains(t), onSelected: (sel) => setState(() => sel ? _selectedTreatments.add(t) : _selectedTreatments.remove(t)))).toList(),
-                              const SizedBox(width: 8),
-                              FilterChip(label: const Text('All Pastures'), selected: _selectedPastures.isEmpty, onSelected: (_) => setState(() => _selectedPastures.clear())),
-                              ...pastures.map((p) => FilterChip(label: Text(p), selected: _selectedPastures.contains(p), onSelected: (sel) => setState(() => sel ? _selectedPastures.add(p) : _selectedPastures.remove(p)))).toList(),
-                            ]),
-                          ],
-                        ),
-                      ),
+                      Row(children: [
+                        Expanded(child: Row(children: [const Text('Bins:'), Expanded(child: Slider(value: _binCount.toDouble(), min: 3, max: 30, divisions: 27, label: '$_binCount', onChanged: (v) => setState(() => _binCount = v.round())),),],),),
+                        const SizedBox(width: 8),
+                        Column(children: [
+                          Row(children: [
+                            const Text('Log'),
+                            Switch(value: _logScale, onChanged: (v) => setState(() => _logScale = v)),
+                          ]),
+                        ]),
+                      ]),
+                      const SizedBox(height: 8),
+                      // Filters
+                      SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
+                        const Text('Filter:'), const SizedBox(width: 8),
+                        Wrap(spacing: 6, children: [
+                          FilterChip(label: const Text('All Treatments'), selected: _selectedTreatments.isEmpty, onSelected: (_) => setState(() => _selectedTreatments.clear())),
+                          ...treatments.map((t) => FilterChip(label: Text(t), selected: _selectedTreatments.contains(t), onSelected: (sel) => setState(() => sel ? _selectedTreatments.add(t) : _selectedTreatments.remove(t)))).toList(),
+                          const SizedBox(width: 8),
+                          FilterChip(label: const Text('All Pastures'), selected: _selectedPastures.isEmpty, onSelected: (_) => setState(() => _selectedPastures.clear())),
+                          ...pastures.map((p) => FilterChip(label: Text(p), selected: _selectedPastures.contains(p), onSelected: (sel) => setState(() => sel ? _selectedPastures.add(p) : _selectedPastures.remove(p)))).toList(),
+                        ]),
+                      ])),
+                      const SizedBox(height: 8),
+                      Row(children: [
+                        ElevatedButton.icon(onPressed: () {
+                          // export filtered data as CSV
+                          final csv = StringBuffer();
+                          csv.writeln('timestamp,gain');
+                          for (var r in filtered) csv.writeln('${r['label']},${(r['value'] as double).toStringAsFixed(2)}');
+                          Share.share(csv.toString(), subject: 'Chart data CSV');
+                        }, icon: const Icon(Icons.download), label: const Text('Export CSV')),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(onPressed: () => _exportChartAsPng(), icon: const Icon(Icons.image), label: const Text('Export PNG')),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(onPressed: () {
+                          final summary = 'Count: $count\nMean: ${mean.toStringAsFixed(2)}\nMedian: ${median.toStringAsFixed(2)}\nRange: ${minVal.toStringAsFixed(0)}–${maxVal.toStringAsFixed(0)}';
+                          Clipboard.setData(ClipboardData(text: summary));
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Summary copied')));
+                        }, icon: const Icon(Icons.copy), label: const Text('Copy Summary')),
+                      ]),
                     ],
                   ),
                 ),
               ),
               const SizedBox(height: 12),
-              // Chart area
-              Expanded(child: _HistogramChart(entries: filtered.map((e) => {'value': e['value'], 'label': e['label']}).toList())),
+
+              // Chart and side info
+              Expanded(
+                child: Row(
+                  children: [
+                    // Left: histogram (wrapped in RepaintBoundary for export)
+                    Expanded(
+                      child: RepaintBoundary(
+                        key: _chartKey,
+                        child: bins.isEmpty
+                            ? const SizedBox.shrink()
+                            : (treatments.length > 1
+                                ? Builder(builder: (_) {
+                                    final series = _buildSeriesCounts(filtered, bins);
+                                    return _MultiSeriesHistogram(bins: bins, seriesCounts: series);
+                                  })
+                                : _HistogramChart(entries: bins.map((b) => {'value': b['value'], 'label': b['label']}).toList())),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // Right: compact interactive sparkline + top3
+                    SizedBox(
+                      width: 180,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const Text('Trend', style: TextStyle(fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 6),
+                          SizedBox(height: 60, child: _InteractiveSparkline(values: values, labels: filtered.map((e) => e['label'] as String).toList())),
+                          const SizedBox(height: 12),
+                          const Text('Top 3 Gains', style: TextStyle(fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 6),
+                          ...top3.take(3).map((e) => ListTile(title: Text('${(e['value'] as double).toStringAsFixed(1)} lbs'), subtitle: Text(e['label'] ?? ''), dense: true, visualDensity: VisualDensity.compact)),
+                        ],
+                      ),
+                    )
+                  ],
+                ),
+              ),
             ],
           ),
         );
       },
     );
   }
+}
+
+// Small sparkline widget: draws a polyline of values
+// Interactive sparkline that shows a tooltip for hovered/tapped points
+class _InteractiveSparkline extends StatefulWidget {
+  final List<double> values;
+  final List<String> labels;
+  const _InteractiveSparkline({Key? key, required this.values, required this.labels}) : super(key: key);
+
+  @override
+  State<_InteractiveSparkline> createState() => _InteractiveSparklineState();
+}
+
+class _InteractiveSparklineState extends State<_InteractiveSparkline> {
+  int? _hoverIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.values.isEmpty) return const SizedBox.shrink();
+    final minV = widget.values.reduce(min);
+    final maxV = widget.values.reduce(max);
+    return MouseRegion(
+      onHover: (ev) {
+        final box = context.findRenderObject() as RenderBox;
+        final local = box.globalToLocal(ev.position);
+        final idx = ((local.dx / box.size.width) * (widget.values.length - 1)).round().clamp(0, widget.values.length - 1);
+        setState(() => _hoverIndex = idx);
+      },
+      onExit: (_) => setState(() => _hoverIndex = null),
+      child: GestureDetector(
+        onTapDown: (ev) {
+          final box = context.findRenderObject() as RenderBox;
+          final local = box.globalToLocal(ev.globalPosition);
+          final idx = ((local.dx / box.size.width) * (widget.values.length - 1)).round().clamp(0, widget.values.length - 1);
+          final label = widget.labels[idx];
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$label — ${widget.values[idx].toStringAsFixed(1)} lbs')));
+        },
+        child: Stack(
+          children: [
+            CustomPaint(size: Size.infinite, painter: _SparklinePainter(widget.values, minV, maxV)),
+            if (_hoverIndex != null)
+              Positioned(
+                left: (_hoverIndex! / (widget.values.length - 1)) * MediaQuery.of(context).size.width * 0.9,
+                top: 4,
+                child: Material(
+                  elevation: 4,
+                  color: Colors.transparent,
+                  child: Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(6)), child: Text('${widget.labels[_hoverIndex!]}\n${widget.values[_hoverIndex!].toStringAsFixed(1)} lbs', style: const TextStyle(fontSize: 11))),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SparklinePainter extends CustomPainter {
+  final List<double> values;
+  final double minV;
+  final double maxV;
+  _SparklinePainter(this.values, this.minV, this.maxV);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = Colors.green.shade700..style = PaintingStyle.stroke..strokeWidth = 2;
+    final bg = Paint()..color = Colors.green.shade100.withOpacity(0.6);
+    final path = Path();
+    final n = values.length;
+    for (var i = 0; i < n; i++) {
+      final x = (n == 1) ? size.width / 2 : i / (n - 1) * size.width;
+      final yNorm = (values[i] - minV) / (maxV - minV == 0 ? 1 : (maxV - minV));
+      final y = size.height - yNorm * size.height;
+      if (i == 0) path.moveTo(x, y);
+      else path.lineTo(x, y);
+    }
+    final fill = Path.from(path)..lineTo(size.width, size.height)..lineTo(0, size.height)..close();
+    canvas.drawPath(fill, bg);
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _WavePainter extends CustomPainter {
