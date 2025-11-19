@@ -62,16 +62,28 @@ class PredictService {
     while (attempt < maxAttempts) {
       attempt += 1;
       try {
-        final response = await client
+        // First try /health
+        final healthResp = await client
             .get(uri)
             .timeout(Duration(seconds: timeoutSeconds), onTimeout: () => http.Response('timeout', 408));
 
-        // Log health check attempts
         try {
-          print('-- PredictService.checkReachable attempt $attempt status: ${response.statusCode}');
+          print('-- PredictService.checkReachable attempt $attempt /health status: ${healthResp.statusCode}');
         } catch (_) {}
 
-        if (response.statusCode >= 200 && response.statusCode < 400) return true;
+        if (healthResp.statusCode >= 200 && healthResp.statusCode < 400) return true;
+
+        // If /health is not found (404), fall back to root /
+        if (healthResp.statusCode == 404) {
+          final rootUri = ep.replace(path: '/');
+          final rootResp = await client
+              .get(rootUri)
+              .timeout(Duration(seconds: timeoutSeconds), onTimeout: () => http.Response('timeout', 408));
+          try {
+            print('-- PredictService.checkReachable attempt $attempt / status: ${rootResp.statusCode}');
+          } catch (_) {}
+          if (rootResp.statusCode >= 200 && rootResp.statusCode < 400) return true;
+        }
       } catch (_) {
         // swallow and retry after backoff
       }
@@ -82,5 +94,21 @@ class PredictService {
     }
 
     return false;
+  }
+
+  /// Fetch the health JSON from `/health` (or throw on non-200).
+  Future<Map<String, dynamic>> getHealth({http.Client? client, int timeoutSeconds = 5}) async {
+    client ??= http.Client();
+    final ep = Uri.parse(endpoint);
+    final uri = ep.replace(path: '/health');
+
+    final resp = await client.get(uri).timeout(Duration(seconds: timeoutSeconds), onTimeout: () => http.Response('timeout', 408));
+    if (resp.statusCode >= 200 && resp.statusCode < 300) {
+      final data = json.decode(resp.body);
+      if (data is Map<String, dynamic>) return data;
+      return Map<String, dynamic>.from(data);
+    }
+
+    throw Exception('Health check failed: HTTP ${resp.statusCode} - ${resp.body}');
   }
 }
