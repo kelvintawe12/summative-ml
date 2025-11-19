@@ -3,6 +3,8 @@ from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 import joblib
 import pandas as pd
+import time
+import os
 
 app = FastAPI(title="Ranch Conservation Weight Gain Predictor")
 
@@ -13,6 +15,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# start time for uptime reporting
+start_time = time.time()
+
+# version (can be set via env var or hardcoded)
+APP_VERSION = os.environ.get('APP_VERSION', '0.0.1')
 
 # Load all files
 model = joblib.load("best_model.pkl")
@@ -31,6 +39,13 @@ class InputData(BaseModel):
 @app.get("/")
 def home():
     return {"message": "USDA Cattle Gain Prediction API - LIVE"}
+
+
+@app.get("/health")
+def health():
+    """Health endpoint returning status, uptime and version."""
+    uptime = int(time.time() - start_time)
+    return {"status": "ok", "uptime": uptime, "version": APP_VERSION}
 
 @app.post("/predict")
 def predict(data: InputData):

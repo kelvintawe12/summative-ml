@@ -27,6 +27,12 @@ class PredictService {
 
     final response = await client.post(Uri.parse(endpoint), headers: {'Content-Type': 'application/json'}, body: body);
 
+    // Log full response for easier debugging (status + body)
+    try {
+      print('-- PredictService.predict response status: ${response.statusCode}');
+      print('-- PredictService.predict response body: ${response.body}');
+    } catch (_) {}
+
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       if (data is Map<String, dynamic>) return data;
@@ -44,29 +50,37 @@ class PredictService {
 
   /// Check whether the API endpoint is reachable.
   /// Returns `true` when a successful response (status 200-399) is received within [timeoutSeconds].
-  Future<bool> checkReachable({http.Client? client, int timeoutSeconds = 5}) async {
+  /// Check whether the API endpoint is reachable by calling `/health`.
+  /// Retries with exponential backoff up to [maxAttempts].
+  Future<bool> checkReachable({http.Client? client, int timeoutSeconds = 3, int maxAttempts = 3}) async {
     client ??= http.Client();
-    try {
-      // Prefer checking the server root (health) rather than the POST endpoint,
-      // because /predict accepts only POST and may return 405 for HEAD/GET.
-      final ep = Uri.parse(endpoint);
-      final uri = ep.replace(path: '/');
-      // Try a HEAD request first — some servers may not support it, fall back to GET.
-      final response = await client
-          .head(uri)
-          .timeout(Duration(seconds: timeoutSeconds), onTimeout: () => http.Response('timeout', 408));
+    final ep = Uri.parse(endpoint);
+    // Use /health endpoint which is GET-friendly
+    final uri = ep.replace(path: '/health');
 
-        // If server responds with success (2xx-3xx) or responds 405 (Method Not Allowed)
-        // then the host is reachable and the endpoint exists but doesn't accept HEAD/GET.
-        if ((response.statusCode >= 200 && response.statusCode < 400) || response.statusCode == 405) return true;
-
-        // Fall back to GET if HEAD didn't return success
-        final getResp = await client
+    int attempt = 0;
+    while (attempt < maxAttempts) {
+      attempt += 1;
+      try {
+        final response = await client
             .get(uri)
             .timeout(Duration(seconds: timeoutSeconds), onTimeout: () => http.Response('timeout', 408));
-        return getResp.statusCode >= 200 && getResp.statusCode < 400;
-    } catch (_) {
-      return false;
+
+        // Log health check attempts
+        try {
+          print('-- PredictService.checkReachable attempt $attempt status: ${response.statusCode}');
+        } catch (_) {}
+
+        if (response.statusCode >= 200 && response.statusCode < 400) return true;
+      } catch (_) {
+        // swallow and retry after backoff
+      }
+
+      // Exponential backoff (ms)
+      final backoffMs = 200 * (1 << (attempt - 1));
+      await Future.delayed(Duration(milliseconds: backoffMs));
     }
+
+    return false;
   }
 }

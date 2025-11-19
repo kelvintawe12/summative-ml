@@ -12,7 +12,7 @@ import 'package:ranch_conservation_predictor/main.dart';
 
 void main() {
   testWidgets('App loads and shows title', (WidgetTester tester) async {
-    await tester.pumpWidget(const RanchApp());
+    await tester.pumpWidget(const MaterialApp(home: PredictorPage(disableInitialApiCheck: true)));
     // wait for frames
     await tester.pumpAndSettle();
     expect(find.text('Cattle Gain Predictor'), findsOneWidget);

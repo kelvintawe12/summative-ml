@@ -30,7 +30,8 @@ class RanchApp extends StatelessWidget {
 }
 
 class PredictorPage extends StatefulWidget {
-  const PredictorPage({super.key});
+  final bool disableInitialApiCheck;
+  const PredictorPage({super.key, this.disableInitialApiCheck = false});
 
   @override
   State<PredictorPage> createState() => _PredictorPageState();
@@ -74,6 +75,10 @@ class _PredictorPageState extends State<PredictorPage> {
         pasture: pasture,
         client: http.Client(),
       );
+      // Log the raw response map for debugging
+      try {
+        print('-- App received response: $resp');
+      } catch (_) {}
 
       final gain = resp['predicted_weight_gain_lbs'] ?? resp['predicted_gain'] ?? resp['predicted'];
       setState(() {
@@ -84,7 +89,14 @@ class _PredictorPageState extends State<PredictorPage> {
         }
       });
     } catch (e) {
+      // Show SnackBar with error and retry option for predictive errors
       setState(() => result = 'Error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Prediction failed: $e'),
+          action: SnackBarAction(label: 'Retry', onPressed: _onPredict),
+        ),
+      );
     } finally {
       setState(() => loading = false);
     }
@@ -95,8 +107,23 @@ class _PredictorPageState extends State<PredictorPage> {
     try {
       final ok = await _service.checkReachable(client: http.Client());
       setState(() => apiReachable = ok);
+      if (!ok) {
+        // Show a SnackBar with Retry when API is unreachable
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('API unreachable'),
+            action: SnackBarAction(label: 'Retry', onPressed: _checkApi),
+          ),
+        );
+      }
     } catch (_) {
       setState(() => apiReachable = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('API unreachable'),
+          action: SnackBarAction(label: 'Retry', onPressed: _checkApi),
+        ),
+      );
     }
   }
 
@@ -112,7 +139,7 @@ class _PredictorPageState extends State<PredictorPage> {
   void initState() {
     super.initState();
     // Check API reachability on startup
-    _checkApi();
+    if (!widget.disableInitialApiCheck) _checkApi();
   }
 
   @override
