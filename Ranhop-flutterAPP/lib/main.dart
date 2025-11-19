@@ -330,14 +330,16 @@ class _PredictorPageState extends State<PredictorPage> {
   }
 
   Widget _buildChart() {
-    final values = <double>[];
+    final entries = <Map<String, dynamic>>[];
     for (var i = 0; i < predictions.length; i++) {
       final g = predictions[i]['gain'];
       final y = (g is num) ? g.toDouble() : double.tryParse(g?.toString() ?? '') ?? double.nan;
-      if (!y.isNaN) values.add(y);
+      if (!y.isNaN) {
+        entries.add({'value': y, 'label': predictions[i]['timestamp'] ?? ''});
+      }
     }
 
-    if (values.isEmpty) {
+    if (entries.isEmpty) {
       return SizedBox(
         height: 140,
         child: Container(
@@ -358,10 +360,10 @@ class _PredictorPageState extends State<PredictorPage> {
     }
 
     return SizedBox(
-      height: 160,
+      height: 180,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
-        child: _HistogramChart(values: values),
+        child: _HistogramChart(entries: entries),
       ),
     );
   }
@@ -606,53 +608,12 @@ class _PredictorPageState extends State<PredictorPage> {
   }
 }
 
-// Simple custom painter for a small sparkline/line chart (no external packages)
-class _SimpleLineChartPainter extends CustomPainter {
-  final List<double> values;
-  final Color lineColor;
-  _SimpleLineChartPainter(this.values, {this.lineColor = Colors.green});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = lineColor..strokeWidth = 2..style = PaintingStyle.stroke;
-    final bg = Paint()..color = Colors.grey.withOpacity(0.06);
-    canvas.drawRect(Offset.zero & size, bg);
-
-    if (values.isEmpty) return;
-    final double minY = values.reduce((a, b) => a < b ? a : b);
-    final double maxY = values.reduce((a, b) => a > b ? a : b);
-    final yRange = (maxY - minY) == 0 ? 1 : (maxY - minY);
-
-    final path = Path();
-    final dotPaint = Paint()..color = lineColor..style = PaintingStyle.fill;
-
-    if (values.length == 1) {
-      // Single point: draw it centered
-      final x = size.width / 2;
-      final y = size.height - ((values[0] - minY) / yRange) * size.height;
-      canvas.drawCircle(Offset(x, y), 4, dotPaint);
-      return;
-    }
-
-    final stepX = size.width / (values.length - 1);
-    for (var i = 0; i < values.length; i++) {
-      final x = i * stepX;
-      final y = size.height - ((values[i] - minY) / yRange) * size.height;
-      if (i == 0) path.moveTo(x, y);
-      else path.lineTo(x, y);
-      canvas.drawCircle(Offset(x, y), 3, dotPaint);
-    }
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _SimpleLineChartPainter oldDelegate) => oldDelegate.values != values || oldDelegate.lineColor != lineColor;
-}
+// (Removed unused simple line painter — histogram is used now.)
 
 // Top-level histogram widget (moved here so it's a proper top-level declaration)
 class _HistogramChart extends StatefulWidget {
-  final List<double> values;
-  const _HistogramChart({Key? key, required this.values}) : super(key: key);
+  final List<Map<String, dynamic>> entries; // each entry: {'value': double, 'label': String}
+  const _HistogramChart({Key? key, required this.entries}) : super(key: key);
 
   @override
   State<_HistogramChart> createState() => _HistogramChartState();
@@ -664,7 +625,8 @@ class _HistogramChartState extends State<_HistogramChart> with SingleTickerProvi
 
   @override
   Widget build(BuildContext context) {
-    final values = widget.values;
+    final values = widget.entries.map((e) => e['value'] as double).toList();
+    final labels = widget.entries.map((e) => (e['label'] ?? '') as String).toList();
     final maxVal = values.isEmpty ? 1.0 : values.reduce(max);
     final minVal = values.isEmpty ? 0.0 : values.reduce(min);
     final span = (maxVal - minVal) == 0 ? (maxVal == 0 ? 1.0 : maxVal) : (maxVal - minVal);
@@ -678,52 +640,93 @@ class _HistogramChartState extends State<_HistogramChart> with SingleTickerProvi
           child: LayoutBuilder(builder: (context, constraints) {
             final barGap = 6.0;
             final barWidth = max(6.0, (constraints.maxWidth - (values.length - 1) * barGap) / values.length);
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: List.generate(values.length, (i) {
-                final v = values[i];
-                final heightFactor = (v - minVal) / span;
-                final barMaxHeight = constraints.maxHeight - 24; // leave space for bottom label
-                final barHeight = (barMaxHeight * heightFactor).clamp(4.0, barMaxHeight);
-                final isHovered = _hoveredIndex == i;
-                final isSelected = _selectedIndex == i;
+            final barMaxHeight = constraints.maxHeight - 24; // leave space for bottom label
 
-                return Padding(
-                  padding: EdgeInsets.only(right: i == values.length - 1 ? 0 : barGap),
-                  child: MouseRegion(
-                    onEnter: (_) => setState(() => _hoveredIndex = i),
-                    onExit: (_) => setState(() => _hoveredIndex = null),
-                    child: GestureDetector(
-                      onTap: () {
-                        setState(() => _selectedIndex = i == _selectedIndex ? null : i);
-                      },
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          AnimatedContainer(
-                            duration: const Duration(milliseconds: 420),
-                            curve: Curves.easeInOut,
-                            width: barWidth,
-                            height: isSelected ? barHeight + 8 : barHeight,
-                            decoration: BoxDecoration(
-                              color: isSelected ? Colors.green.shade700 : (isHovered ? Colors.green.shade400 : Colors.green.shade300),
-                              borderRadius: BorderRadius.circular(6),
-                              boxShadow: isSelected
-                                  ? [BoxShadow(color: Colors.black26, blurRadius: 6, offset: const Offset(0, 3))]
-                                  : [],
-                            ),
+            // Build bars
+            final bars = List.generate(values.length, (i) {
+              final v = values[i];
+              final heightFactor = (v - minVal) / span;
+              final barHeight = (barMaxHeight * heightFactor).clamp(4.0, barMaxHeight);
+              final isHovered = _hoveredIndex == i;
+              final isSelected = _selectedIndex == i;
+
+              return Padding(
+                padding: EdgeInsets.only(right: i == values.length - 1 ? 0 : barGap),
+                child: MouseRegion(
+                  onEnter: (_) => setState(() => _hoveredIndex = i),
+                  onExit: (_) => setState(() => _hoveredIndex = null),
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() => _selectedIndex = i == _selectedIndex ? null : i);
+                    },
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 420),
+                          curve: Curves.easeInOut,
+                          width: barWidth,
+                          height: isSelected ? barHeight + 8 : barHeight,
+                          decoration: BoxDecoration(
+                            color: isSelected ? Colors.green.shade700 : (isHovered ? Colors.green.shade400 : Colors.green.shade300),
+                            borderRadius: BorderRadius.circular(6),
+                            boxShadow: isSelected ? [BoxShadow(color: Colors.black26, blurRadius: 6, offset: const Offset(0, 3))] : [],
                           ),
-                          const SizedBox(height: 6),
-                          SizedBox(
-                            width: barWidth + 4,
-                            child: Text(values[i].toStringAsFixed(0), textAlign: TextAlign.center, style: const TextStyle(fontSize: 10, color: Colors.black54)),
-                          ),
-                        ],
+                        ),
+                        const SizedBox(height: 6),
+                        SizedBox(
+                          width: barWidth + 4,
+                          child: Text(values[i].toStringAsFixed(0), textAlign: TextAlign.center, style: const TextStyle(fontSize: 10, color: Colors.black54)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            });
+
+            // Tooltip position calculations
+            double tooltipLeft = 0;
+            double tooltipTop = 0;
+            String tooltipText = '';
+            if ((_hoveredIndex ?? _selectedIndex) != null) {
+              final idx = _hoveredIndex ?? _selectedIndex!;
+              final x = idx * (barWidth + barGap);
+              final v = values[idx];
+              final h = (barMaxHeight * ((v - minVal) / span)).clamp(4.0, barMaxHeight);
+              const tooltipMaxW = 160.0;
+              final centerX = x + barWidth / 2;
+              final rawLeft = centerX - tooltipMaxW / 2;
+              final leftClamped = rawLeft.clamp(0.0, constraints.maxWidth - tooltipMaxW);
+              tooltipLeft = leftClamped;
+              tooltipTop = (barMaxHeight - h - 44).clamp(0.0, constraints.maxHeight - 30); // place tooltip above bar
+              tooltipText = '${labels[idx]}\n${v.toStringAsFixed(1)} lbs';
+            }
+
+            return Stack(
+              children: [
+                Positioned.fill(
+                  child: Align(
+                    alignment: Alignment.bottomLeft,
+                    child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: bars),
+                  ),
+                ),
+                if ((_hoveredIndex ?? _selectedIndex) != null)
+                  Positioned(
+                    left: tooltipLeft,
+                    top: tooltipTop,
+                    child: Material(
+                      elevation: 4,
+                      color: Colors.transparent,
+                      child: Container(
+                        constraints: const BoxConstraints(maxWidth: 160),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(6), boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 6)]),
+                        child: Text(tooltipText, style: const TextStyle(fontSize: 11)),
                       ),
                     ),
                   ),
-                );
-              }),
+              ],
             );
           }),
         ),
