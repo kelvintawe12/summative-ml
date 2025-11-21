@@ -1,146 +1,49 @@
-Sustainable Ranch — Cattle Weight Gain Predictor
+# Sustainable Ranch — Cattle Weight Gain Predictor
 
-Mission (short)
-- Provide ranchers a quick, data-driven estimate of cattle weight gain for different grazing treatments and pastures, using USDA CPER data to inform sustainable grazing decisions.
+*Mission *  
 
-Public API (for automated tests)
-- Swagger UI (public, tests use this): https://summative-ml-hliu.onrender.com/docs
-- The `/predict` POST endpoint accepts JSON and returns `predicted_weight_gain_lbs`. Automated tests will use the public Swagger URL — do NOT use localhost for submission.
+Help ranchers quickly estimate cattle weight gain under light, moderate, and heavy grazing using real USDA long-term research data from the Central Plains Experimental Range (CPER), promoting light grazing for maximum profit and wildlife conservation.
 
-Demo
-- YouTube demo (≤ 5 minutes): <INSERT_YOUTUBE_URL_HERE>
+*Dataset & Source*  
+USDA ARS – Central Plains Experimental Range (CPER), Nunn, Colorado  
+Cattle weight gains managed with light, moderate and heavy grazing intensities (2000–2019)  
+Permanent link: https://agdatacommons.nal.usda.gov/articles/dataset/Data_from_USDA_ARS_Central_Plains_Experimental_Range_CPER_near_Nunn_CO_Cattle_weight_gains_managed_with_light_moderate_and_heavy_grazing_intensities/25217282  
+Original file: LTGI_2000-2019_all_weights_published.csv (cleaned version included as cattle_weights.csv)
 
-Live app
-- Flutter Web App: https://kelvintawe12.github.io/summative-ml/
+*Public API Endpoint*  
+Swagger UI : https://summative-ml-hliu.onrender.com/docs  
 
-Official Dataset Source
-- *USDA Agricultural Research Service* — LTAR Network, Central Plains Experimental Range
-- Dataset (official):
-  https://agdatacommons.nal.usda.gov/articles/dataset/Data_from_USDA_ARS_Central_Plains_Experimental_Range_CPER_near_Nunn_CO_Cattle_weight_gains_managed_with_light_moderate_and_heavy_grazing_intensities/25217282?file=44540186
+*All Endpoints*  
+- *GET /* → Home page (welcome message)  
+- *GET /health* → Returns {"status": "healthy", "model": "RandomForest", "ready": true}  
+- *POST /predict* → Returns {"predicted_weight_gain_lbs": ...}  
 
-Downloaded data (Colab & Drive)
-- I initially ran experiments in Google Colab. To avoid runtime errors when reproducing the notebook locally, I copied the required CSV(s) to a Google Drive share. If you want to run the Colab notebook or reproduce the preprocessing locally, download the working data from this Drive location:
+*YouTube Demo Video *  
+Watch the demo on YouTube :https://youtu.be/LhFGkXUU9UQ
 
-  https://drive.google.com/uc?id=1LLTrZiCAuPTpQUNWKVteyZzcJ-Zews6x
 
-Quick features
-- Random Forest model packaged for serving (best performer)
-- FastAPI backend with Pydantic validation and `/health` endpoint
-- Flutter app: input form, persistent history, charts, export/share
-
-How to run the Flutter mobile/web app
-1) Ensure Flutter is installed and `flutter` is on your PATH (stable channel). See https://flutter.dev/docs/get-started/install
-
-2) Run on Chrome (web):
 ```powershell
-cd Ranhop-flutterAPP
-flutter pub get
-flutter run -d chrome
+flutter create .
 ```
 
-3) Run on Android/emulator:
+This generates platform-specific files (`android/`, `ios/`, etc.).
+
+3. Get packages:
+
 ```powershell
-cd Ranhop-flutterAPP
 flutter pub get
-flutter devices
+```
+
+4. Run the app (choose an emulator or device):
+
+```powershell
 flutter run
 ```
 
 Notes
-- To change the API target (for local testing), edit `Ranhop-flutterAPP/lib/services/predict_service.dart` and update the `baseUrl` constant.
-- If running the API locally, ensure `API/` contains the model artifact files: `best_model.pkl`, `scaler.pkl`, `feature_columns.pkl`, `le_treatment.pkl`, `le_pasture.pkl`.
 
-Contact / Support
-- If you want me to insert the YouTube link or the Google Drive link into this README and/or update the Flutter app base URL, paste the links and I will update the repo.
+- The app posts to `https://summative-ml-hliu.onrender.com/predict`. 
+- To create a release build:
+  - Android: `flutter build apk --release`
+  - iOS: `flutter build ios` (on macOS)
 
-Author: Kelvin Tawe — November 2025
-Sustainable Ranch — Cattle Weight Gain Predictor
-
-Mission / Problem (≤ 4 lines)
-- Provide ranchers with a compact tool to estimate cattle weight gain under different grazing treatments and pastures using historical USDA CPER data, helping balance production and conservation.
-
-Public API (use this for automated tests)
-- Swagger UI (public): https://summative-ml-hliu.onrender.com/docs
-- The grader will POST to `/predict` via the Swagger UI. The endpoint accepts JSON and returns `predicted_weight_gain_lbs`. Use the public URL (not localhost) for testing.
-
-YouTube demo (≤ 5 minutes)
-- <INSERT_YOUTUBE_URL_HERE>
-
-How to run the mobile/web app (clear steps)
-Prerequisites:
-- Install Flutter (stable) and ensure `flutter` is on your PATH. See: https://flutter.dev/docs/get-started/install
-
-Run in Chrome (web):
-```powershell
-cd Ranhop-flutterAPP
-flutter pub get
-flutter run -d chrome
-```
-
-Run on Android device/emulator:
-```powershell
-cd Ranhop-flutterAPP
-flutter pub get
-flutter devices
-flutter run
-```
-
-Notes
-- The Flutter app calls the public prediction API. For automated grading keep the app pointed at the public Swagger domain above. To change the target (local tests), edit `Ranhop-flutterAPP/lib/services/predict_service.dart` and modify the `baseUrl` constant.
-- If you run the API locally, ensure `API/` contains the model artifacts: `best_model.pkl`, `scaler.pkl`, `feature_columns.pkl`, `le_treatment.pkl`, `le_pasture.pkl`.
-
-Data / Colab
-- Official dataset (USDA ARS LTAR CPER): https://agdatacommons.nal.usda.gov/articles/dataset/Data_from_USDA_ARS_Central_Plains_Experimental_Range_CPER_near_Nunn_CO_Cattle_weight_gains_managed_with_light_moderate_and_heavy_grazing_intensities/25217282?file=44540186
-- I ran preprocessing and experiments in Google Colab. To avoid runtime issues I included a working copy of the processed CSV on Google Drive:
-  https://drive.google.com/uc?id=1LLTrZiCAuPTpQUNWKVteyZzcJ-Zews6x
-
-Contact / Notes
-- To have me insert the YouTube URL or change the app base URL automatically, paste the URL(s) here and I will update the repo.
-
-Author: Kelvin Tawe — November 2025
-- Swagger UI (public, tests use this): https://summative-ml-hliu.onrender.com/docs
-- The grader will use the public Swagger UI to POST to `/predict`. The endpoint expects JSON and returns `predicted_weight_gain_lbs`. Do NOT use localhost in the submission — use the public URL above.
-
-Demo
-- YouTube demo (≤ 5 minutes): <INSERT_YOUTUBE_URL_HERE>
-
-
-Live app
-- Flutter Web App: https://kelvintawe12.github.io/summative-ml/
-
-### Official Dataset Source
-*USDA Agricultural Research Service*  
-Long-Term Agroecosystem Research (LTAR) Network – Central Plains Experimental Range  
-https://agdatacommons.nal.usda.gov/articles/dataset/Data_from_USDA_ARS_Central_Plains_Experimental_Range_CPER_near_Nunn_CO_Cattle_weight_gains_managed_with_light_moderate_and_heavy_grazing_intensities/25217282?file=44540186
-
-Quick features
-- Random Forest model packaged for serving (best performer during evaluation)
-- FastAPI backend with Pydantic validation and a `/health` endpoint
-- Flutter app: input form, history (persisted), charts, export/share utilities
-
-How to run the Flutter mobile/web app
-1) Ensure Flutter is installed and `flutter` is on your PATH. See https://flutter.dev/docs/get-started/install
-
-2) Run on Chrome (web):
-```powershell
-cd Ranhop-flutterAPP
-flutter pub get
-flutter run -d chrome
-```
-
-3) Run on Android/emulator:
-```powershell
-cd Ranhop-flutterAPP
-flutter pub get
-flutter devices
-flutter run
-```
-
-Notes
-- To change the API target (for local testing), edit `Ranhop-flutterAPP/lib/services/predict_service.dart` and update the `baseUrl` constant.
-- If running the API locally, make sure `API/` contains the model artifact files: `best_model.pkl`, `scaler.pkl`, `feature_columns.pkl`, `le_treatment.pkl`, `le_pasture.pkl`.
-
-Contact / Support
-- If you want me to insert your YouTube link or update the app base URL to the public API automatically, paste the link or new base URL and I will update the repo.
-
-Author: Kelvin Tawe — November 2025
