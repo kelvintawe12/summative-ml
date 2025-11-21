@@ -8,10 +8,7 @@ Public API (for automated tests)
 - The `/predict` POST endpoint accepts JSON and returns `predicted_weight_gain_lbs`. Automated tests will use the public Swagger URL — do NOT use localhost for submission.
 
 Demo
-- YouTube demo (≤ 5 minutes): <INSERT_YOUTUBE_URL_HERE>
-
-Live app
-- Flutter Web App: https://kelvintawe12.github.io/summative-ml/
+- **YouTube demo**: https://youtu.be/LhFGkXUU9UQ
 
 Official Dataset Source
 - *USDA Agricultural Research Service* — LTAR Network, Central Plains Experimental Range
@@ -61,10 +58,6 @@ Public API (for automated tests)
 - Swagger UI (public, tests use this): https://summative-ml-hliu.onrender.com/docs
 - The `/predict` POST endpoint accepts JSON inputs and returns `predicted_weight_gain_lbs`. Use the Swagger UI above to exercise the endpoint (do NOT use localhost when submitting tests).
 
-YouTube demo (≤ 5 minutes)
-- Demo video: <INSERT_YOUTUBE_URL_HERE>  
-  (Replace the placeholder above with a publicly accessible YouTube link of at most 5 minutes.)
-
 Run the mobile/web app (Flutter)
 1. Prerequisites
    - Install Flutter (stable) and enable the desired platforms (web, Android or iOS). See https://flutter.dev/docs/get-started/install.
@@ -100,8 +93,8 @@ Author: Kelvin Tawe — November 2025
 **Mission**: Help ranchers choose light grazing using real USDA CPER data → highest profit + wildlife conservation.
 
 ### Live Links
+-**summative youtube link**: https://youtu.be/LhFGkXUU9UQ
 - **Public API (Swagger UI)**: https://summative-ml-hliu.onrender.com/docs
-- **Flutter Web App (works on any phone/laptop)**: https://kelvintawe12.github.io/summative-ml/
 Sustainable Ranch Cattle Weight Gain Predictor — Kelvin Tawe
 
 Mission (short)
@@ -109,14 +102,13 @@ Mission (short)
 
 Public API (used for automated tests)
 - Swagger UI (public, tests use this): https://summative-ml-hliu.onrender.com/docs
-- The grader will use the public Swagger UI to POST to `/predict`. The endpoint expects JSON and returns `predicted_weight_gain_lbs`. Do NOT use localhost in the submission — use the public URL above.
 
 Demo
-- YouTube demo (≤ 5 minutes): <INSERT_YOUTUBE_URL_HERE>
+- YouTube demo :https://youtu.be/LhFGkXUU9UQ
 
 
 Live app
-- Flutter Web App: https://kelvintawe12.github.io/summative-ml/
+- Github url : https://github.com/kelvintawe12/summative-ml.git
 
 ### Official Dataset Source
 *USDA Agricultural Research Service*  
